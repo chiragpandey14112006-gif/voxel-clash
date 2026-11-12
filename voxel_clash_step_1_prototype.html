@@ -1,0 +1,3443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Voxel Clash: Step 3 - First-Person Frustum Engine & Clash RTS</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Three.js r128 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@600;700;800&display=swap" rel="stylesheet">
+    <style>
+        * {
+            user-select: none;
+            -webkit-user-select: none;
+            box-sizing: border-box;
+        }
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #070b14;
+            font-family: 'Inter', sans-serif;
+        }
+        #game-canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            cursor: crosshair;
+        }
+        .font-display {
+            font-family: 'Space Grotesk', sans-serif;
+        }
+        /* Glassmorphic HUD Styling */
+        .hud-glass {
+            background: rgba(10, 16, 29, 0.84);
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+        }
+        .hud-glass-bright {
+            background: rgba(15, 23, 42, 0.94);
+            backdrop-filter: blur(18px);
+            border: 1px solid rgba(251, 191, 36, 0.4);
+        }
+        /* Hotbar & Spell Button Transitions */
+        .slot-btn {
+            transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        .slot-btn:hover {
+            transform: translateY(-3px);
+            border-color: rgba(255, 255, 255, 0.32);
+        }
+        .slot-btn.active {
+            border-color: #fbbf24;
+            background: linear-gradient(180deg, rgba(251, 191, 36, 0.28) 0%, rgba(217, 119, 6, 0.09) 100%);
+            box-shadow: 0 0 18px rgba(251, 191, 36, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+            transform: translateY(-4px);
+        }
+        /* Floating 3D Combat & Loot Numbers */
+        @keyframes floatUpFade {
+            0% {
+                opacity: 1;
+                transform: translate(-50%, 0px) scale(0.82);
+            }
+            20% {
+                opacity: 1;
+                transform: translate(-50%, -14px) scale(1.06);
+            }
+            100% {
+                opacity: 0;
+                transform: translate(-50%, -50px) scale(0.92);
+            }
+        }
+        .floating-popup {
+            position: absolute;
+            pointer-events: none;
+            font-weight: 800;
+            font-size: 0.85rem;
+            text-shadow: 0 2px 6px rgba(0,0,0,0.95);
+            animation: floatUpFade 1.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+            z-index: 30;
+            white-space: nowrap;
+        }
+        ::-webkit-scrollbar { width: 5px; height: 5px; }
+        ::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.4); }
+        ::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, 0.4); border-radius: 9999px; }
+    </style>
+</head>
+<body class="relative text-slate-100 overflow-hidden">
+
+    <!-- 3D WEBGL CANVAS & 2D OVERLAY CONTAINER -->
+    <div id="canvas-container" class="w-full h-full relative">
+        <canvas id="game-canvas"></canvas>
+        <div id="overlay-container" class="absolute inset-0 pointer-events-none overflow-hidden"></div>
+
+        <!-- FIRST-PERSON TACTICAL CROSSHAIR (Centered in First-Person POV) -->
+        <div id="fps-crosshair" class="fixed inset-0 pointer-events-none flex items-center justify-center z-20">
+            <div class="relative flex items-center justify-center">
+                <div class="w-2 h-2 bg-amber-400 rounded-full shadow-[0_0_10px_#fbbf24]"></div>
+                <div class="absolute w-7 h-0.5 bg-white/75 rounded-full"></div>
+                <div class="absolute h-7 w-0.5 bg-white/75 rounded-full"></div>
+                <div class="w-9 h-9 rounded-full border border-amber-400/40"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- =================================================================== -->
+    <!-- TOP HUD BAR: POV Switcher, 4 Resource Capacities, Forge & Save/Load -->
+    <!-- =================================================================== -->
+    <header class="fixed top-2.5 left-2.5 right-2.5 z-20 flex flex-wrap items-start justify-between gap-2 pointer-events-none">
+        
+        <!-- Left: Brand + POV Switcher (First-Person vs Clash Isometric) -->
+        <div class="flex flex-wrap items-center gap-2 pointer-events-auto">
+            <div class="hud-glass px-3 py-1.5 rounded-2xl flex items-center gap-2.5 shadow-xl">
+                <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-amber-400 via-orange-500 to-rose-600 flex items-center justify-center shadow-md font-display text-slate-950 font-extrabold text-lg">
+                    V
+                </div>
+                <div>
+                    <div class="flex items-center gap-1.5">
+                        <h1 class="font-display font-bold text-xs sm:text-sm tracking-tight text-white">VOXEL CLASH</h1>
+                        <span class="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">Step 3 Engine</span>
+                    </div>
+                    <p id="telemetry-label" class="text-[11px] text-slate-400 font-medium">Emerald Plains (0, 0) • Frustum Active</p>
+                </div>
+            </div>
+
+            <!-- POV Switcher: First-Person Sight vs Clash of Clans Isometric Overview -->
+            <div class="hud-glass p-1.5 rounded-2xl flex items-center gap-1 shadow-xl">
+                <span class="text-[10px] uppercase tracking-wider font-bold text-slate-400 px-1.5 hidden xl:inline">POV [V]:</span>
+                <button data-pov="fps" class="pov-btn px-2.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1 bg-amber-500 text-slate-950 shadow">
+                    <span>👁️</span> <span>1st-Person POV</span>
+                </button>
+                <button data-pov="clash" class="pov-btn px-2.5 py-1.5 rounded-xl text-xs font-semibold text-slate-300 hover:text-white hover:bg-slate-800/80 transition flex items-center gap-1">
+                    <span>🏰</span> <span>Clash Isometric</span>
+                </button>
+                <button data-pov="freepan" class="pov-btn px-2.5 py-1.5 rounded-xl text-xs font-semibold text-slate-300 hover:text-white hover:bg-slate-800/80 transition flex items-center gap-1">
+                    <span>🗺️</span> <span>Scout Cam</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Center: 4 Resource Bars with Storage Capacities + Gems + Knights -->
+        <div class="hud-glass px-3 py-1.5 rounded-2xl flex flex-wrap items-center gap-2 sm:gap-3 pointer-events-auto shadow-xl">
+            <!-- Wood -->
+            <div class="w-24 sm:w-28">
+                <div class="flex justify-between items-center text-[11px] font-bold">
+                    <span class="text-amber-300 flex items-center gap-1">🪵 Wood</span>
+                    <span id="res-wood-text" class="text-white font-mono text-[11px]">240/600</span>
+                </div>
+                <div class="w-full h-1.5 bg-slate-950 rounded-full overflow-hidden mt-0.5 border border-slate-700/70">
+                    <div id="res-wood-bar" class="h-full bg-amber-600 transition-all duration-300" style="width: 40%"></div>
+                </div>
+            </div>
+
+            <!-- Stone -->
+            <div class="w-24 sm:w-28">
+                <div class="flex justify-between items-center text-[11px] font-bold">
+                    <span class="text-slate-300 flex items-center gap-1">🪨 Stone</span>
+                    <span id="res-stone-text" class="text-white font-mono text-[11px]">200/600</span>
+                </div>
+                <div class="w-full h-1.5 bg-slate-950 rounded-full overflow-hidden mt-0.5 border border-slate-700/70">
+                    <div id="res-stone-bar" class="h-full bg-slate-400 transition-all duration-300" style="width: 33%"></div>
+                </div>
+            </div>
+
+            <!-- Gold -->
+            <div class="w-28 sm:w-32">
+                <div class="flex justify-between items-center text-[11px] font-bold">
+                    <span class="text-yellow-300 flex items-center gap-1">🪙 Gold <b id="rate-gold" class="text-[10px] text-emerald-400">+0/s</b></span>
+                    <span id="res-gold-text" class="text-yellow-200 font-mono text-[11px]">200/600</span>
+                </div>
+                <div class="w-full h-1.5 bg-slate-950 rounded-full overflow-hidden mt-0.5 border border-slate-700/70">
+                    <div id="res-gold-bar" class="h-full bg-gradient-to-r from-yellow-500 to-amber-300 transition-all duration-300" style="width: 33%"></div>
+                </div>
+            </div>
+
+            <!-- Elixir -->
+            <div class="w-28 sm:w-32">
+                <div class="flex justify-between items-center text-[11px] font-bold">
+                    <span class="text-fuchsia-300 flex items-center gap-1">🧪 Elixir <b id="rate-elixir" class="text-[10px] text-emerald-400">+0/s</b></span>
+                    <span id="res-elixir-text" class="text-fuchsia-200 font-mono text-[11px]">180/600</span>
+                </div>
+                <div class="w-full h-1.5 bg-slate-950 rounded-full overflow-hidden mt-0.5 border border-slate-700/70">
+                    <div id="res-elixir-bar" class="h-full bg-gradient-to-r from-fuchsia-600 to-purple-400 transition-all duration-300" style="width: 30%"></div>
+                </div>
+            </div>
+
+            <!-- Gems & Knights Badge -->
+            <div class="flex items-center gap-1.5 pl-2 border-l border-slate-700/80 text-xs font-bold">
+                <div class="px-2 py-1 rounded-lg bg-emerald-950/80 border border-emerald-500/40 text-emerald-300 flex items-center gap-1" title="Gems looted from Goblin Outpost Chests">
+                    <span>💎</span> <span id="res-gems">8</span>
+                </div>
+                <div class="px-2 py-1 rounded-lg bg-sky-950/80 border border-sky-500/40 text-sky-300 flex items-center gap-1" title="Friendly Knights trained from Barracks">
+                    <span>🛡️</span> <span id="army-count">0/0</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right: Hero Forge [F], Save/Reset, Lighting & Raid Wave -->
+        <div class="flex items-center gap-1.5 pointer-events-auto">
+            <button id="btn-open-forge" class="hud-glass hover:bg-amber-500/20 px-3 py-2 rounded-xl text-xs font-bold text-amber-300 border border-amber-400/40 transition flex items-center gap-1.5 shadow-lg" title="Open Hero Crafting Forge [F]">
+                <span>⚒️</span> <span>Forge [F]</span>
+            </button>
+            <button id="btn-save-world" class="hud-glass hover:bg-emerald-950/90 px-2.5 py-2 rounded-xl text-xs font-bold text-emerald-300 border border-emerald-500/40 transition shadow-lg" title="Save Base & Progress to Browser Storage">
+                💾 Save
+            </button>
+            <button id="btn-time-toggle" class="hud-glass hover:bg-slate-800 px-2.5 py-2 rounded-xl text-xs font-bold text-amber-200 border border-amber-400/30 transition shadow-lg" title="Switch Day / Sunset / Night Lighting">
+                <span id="time-icon">☀️</span>
+            </button>
+            <button id="btn-trigger-raid" class="hud-glass hover:bg-rose-950/90 px-3 py-2 rounded-xl text-xs font-bold text-rose-300 border border-rose-500/40 transition flex items-center gap-1 shadow-lg" title="Summon a Goblin Raid Wave!">
+                <span>📯</span> <span>Raid (<span id="raid-timer">45s</span>)</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- =================================================================== -->
+    <!-- LEFT PANEL: REAL-TIME VIEW FRUSTUM CULLING TELEMETRY & SIGHT CONFIG -->
+    <!-- =================================================================== -->
+    <aside class="fixed top-16 left-2.5 z-20 flex flex-col gap-2 pointer-events-none w-64 sm:w-72">
+        <div class="hud-glass p-3 rounded-2xl shadow-2xl pointer-events-auto border border-emerald-500/30">
+            <div class="flex items-center justify-between mb-1.5">
+                <div class="flex items-center gap-1.5">
+                    <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+                    <span class="font-display font-bold text-xs text-white uppercase tracking-wider">Frustum Culling Engine</span>
+                </div>
+                <span id="cull-percent-badge" class="text-[10px] font-extrabold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">86% Culled</span>
+            </div>
+
+            <!-- Live GPU Instance Counts -->
+            <div class="space-y-1.5 text-[11px] bg-slate-950/70 p-2 rounded-xl border border-slate-800/90">
+                <div class="flex justify-between">
+                    <span class="text-slate-400">Rendered Voxel Tiles:</span>
+                    <span id="stat-tiles-rendered" class="font-mono font-bold text-emerald-300">1,820 / 14,400</span>
+                </div>
+                <div class="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden">
+                    <div id="stat-tiles-bar" class="h-full bg-gradient-to-r from-emerald-500 to-cyan-400 transition-all duration-150" style="width: 14%"></div>
+                </div>
+                <div class="flex justify-between pt-0.5">
+                    <span class="text-slate-400">Visible 3D Entities:</span>
+                    <span id="stat-entities-rendered" class="font-mono font-bold text-sky-300">42 / 460</span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-slate-400">Active Chunks (8×8):</span>
+                    <span id="stat-chunks-rendered" class="font-mono font-bold text-amber-300">28 / 225</span>
+                </div>
+            </div>
+
+            <!-- View Distance Slider -->
+            <div class="mt-2">
+                <div class="flex justify-between text-[10px] font-bold text-slate-300 mb-0.5">
+                    <span>Sight Render Distance</span>
+                    <span id="render-dist-label" class="text-amber-300 font-mono">58m</span>
+                </div>
+                <input id="slider-render-dist" type="range" min="26" max="96" value="58" class="w-full accent-amber-400 h-1.5 bg-slate-800 rounded-lg cursor-pointer">
+            </div>
+
+            <!-- Mouse Sight Mode Toggle (Hover Sight vs Drag/Lock Sight) -->
+            <div class="mt-2 pt-2 border-t border-slate-800 flex items-center justify-between gap-2">
+                <span class="text-[10px] font-semibold text-slate-300">1st-Person Mouse Sight:</span>
+                <button id="btn-sight-mode" class="px-2 py-1 rounded-lg text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-400/40 hover:bg-amber-500/30 transition">
+                    👁️ Auto Hover-Sight: ON
+                </button>
+            </div>
+        </div>
+
+        <!-- CLASH OF CLANS ACTIVE SPELL DECK (Keys Z, X, C) -->
+        <div class="hud-glass p-2.5 rounded-2xl shadow-2xl pointer-events-auto border border-fuchsia-500/30">
+            <div class="flex items-center justify-between mb-1.5">
+                <span class="font-display font-bold text-[11px] text-fuchsia-300 uppercase tracking-wider">⚡ Clash Spell Factory</span>
+                <span class="text-[10px] text-slate-400">Cast at Crosshair</span>
+            </div>
+            <div class="grid grid-cols-3 gap-1.5">
+                <button data-spell="heal" class="spell-btn p-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/30 border border-amber-400/40 flex flex-col items-center transition relative">
+                    <span class="absolute top-0.5 left-1 text-[9px] font-mono font-bold text-amber-200">Z</span>
+                    <span class="text-base">💛</span>
+                    <span class="font-bold text-[10px] text-white">Heal Ring</span>
+                    <span class="text-[9px] text-fuchsia-300 font-mono">60🧪</span>
+                </button>
+                <button data-spell="rage" class="spell-btn p-1.5 rounded-xl bg-fuchsia-500/15 hover:bg-fuchsia-500/30 border border-fuchsia-400/40 flex flex-col items-center transition relative">
+                    <span class="absolute top-0.5 left-1 text-[9px] font-mono font-bold text-fuchsia-200">X</span>
+                    <span class="text-base">🔥</span>
+                    <span class="font-bold text-[10px] text-white">Rage Fury</span>
+                    <span class="text-[9px] text-fuchsia-300 font-mono">75🧪</span>
+                </button>
+                <button data-spell="lightning" class="spell-btn p-1.5 rounded-xl bg-sky-500/15 hover:bg-sky-500/30 border border-sky-400/40 flex flex-col items-center transition relative">
+                    <span class="absolute top-0.5 left-1 text-[9px] font-mono font-bold text-sky-200">C</span>
+                    <span class="text-base">⚡</span>
+                    <span class="font-bold text-[10px] text-white">Lightning</span>
+                    <span class="text-[9px] text-fuchsia-300 font-mono">90🧪</span>
+                </button>
+            </div>
+        </div>
+    </aside>
+
+    <!-- =================================================================== -->
+    <!-- RIGHT PANEL: 2D MINIMAP WITH LIVE FRUSTUM FOV CONE + INSPECTOR      -->
+    <!-- =================================================================== -->
+    <aside class="fixed top-16 right-2.5 z-20 flex flex-col gap-2 items-end pointer-events-none">
+        <div class="hud-glass p-2.5 rounded-2xl shadow-2xl pointer-events-auto w-56 sm:w-64">
+            <div class="flex items-center justify-between mb-1.5">
+                <div class="flex items-center gap-1.5">
+                    <span class="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
+                    <span class="font-display font-bold text-xs text-white uppercase tracking-wider">Frustum Cone Radar</span>
+                </div>
+                <span id="outposts-remaining" class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30">12 Outposts</span>
+            </div>
+
+            <!-- 2D Canvas Radar showing ONLY Frustum-Culled Wedge + World Map -->
+            <div class="relative w-full aspect-square rounded-xl overflow-hidden border border-slate-700 bg-slate-950 cursor-pointer" title="Yellow Cone = Live Rendered View Frustum! Click to scout in Isometric mode.">
+                <canvas id="minimap-canvas" width="240" height="240" class="w-full h-full block"></canvas>
+            </div>
+
+            <!-- Radar Legend -->
+            <div class="grid grid-cols-2 gap-1 mt-2 text-[10px] text-slate-300 font-medium">
+                <div class="flex items-center gap-1"><span class="w-2.5 h-2 bg-amber-400/60 border border-amber-300 inline-block"></span> Rendered FOV</div>
+                <div class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-sky-400 inline-block"></span> Town Hall Base</div>
+                <div class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-rose-500 inline-block"></span> Goblin Outpost</div>
+                <div class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-amber-400 inline-block"></span> Loot Chests</div>
+            </div>
+        </div>
+
+        <!-- STRUCTURE INSPECTOR & LEVEL 1-5 UPGRADE MODAL -->
+        <div id="inspector-panel" class="hidden hud-glass-bright p-3.5 rounded-2xl shadow-2xl pointer-events-auto w-64 sm:w-72 transition-all">
+            <div class="flex items-center justify-between pb-2 mb-2 border-b border-slate-700/80">
+                <div>
+                    <div class="flex items-center gap-1.5">
+                        <span id="insp-icon" class="text-lg">🏰</span>
+                        <h3 id="insp-title" class="font-display font-bold text-sm text-white">Town Hall Core</h3>
+                    </div>
+                    <span id="insp-level" class="text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-400/30">Level 1</span>
+                </div>
+                <button id="btn-close-inspector" class="text-slate-400 hover:text-white text-xs px-2 py-1 rounded-lg bg-slate-800">✕</button>
+            </div>
+
+            <div class="space-y-2 text-xs">
+                <div>
+                    <div class="flex justify-between text-[11px] font-semibold mb-0.5">
+                        <span class="text-slate-400">Structural Integrity</span>
+                        <span id="insp-hp" class="text-emerald-300 font-mono">1200 / 1200</span>
+                    </div>
+                    <div class="w-full h-2 bg-slate-950 rounded-full overflow-hidden border border-slate-700">
+                        <div id="insp-hp-bar" class="h-full bg-emerald-500 transition-all" style="width: 100%"></div>
+                    </div>
+                </div>
+
+                <p id="insp-stats" class="text-[11px] text-slate-300 bg-slate-900/80 p-2 rounded-xl border border-slate-800 leading-relaxed">
+                    Central command fortress. Upgrading increases storage capacity and durability.
+                </p>
+
+                <div class="flex flex-col gap-1.5 pt-1">
+                    <button id="btn-upgrade-struct" class="w-full py-2 px-3 rounded-xl font-display font-bold text-xs bg-gradient-to-r from-amber-400 to-orange-500 hover:from-amber-300 hover:to-orange-400 text-slate-950 shadow-md flex items-center justify-between">
+                        <span>⬆️ Upgrade to Lv.2</span>
+                        <span id="insp-upg-cost" class="font-mono text-[11px] bg-slate-950/25 px-1.5 py-0.5 rounded">80🪙 50🪨</span>
+                    </button>
+
+                    <button id="btn-barracks-stance" class="hidden w-full py-1.5 px-3 rounded-xl font-bold text-xs bg-sky-600/30 hover:bg-sky-600/50 text-sky-200 border border-sky-400/40 transition flex items-center justify-between">
+                        <span>🛡️ Knight Order:</span>
+                        <span id="stance-label" class="text-amber-300">Follow Hero</span>
+                    </button>
+
+                    <div class="grid grid-cols-2 gap-1.5">
+                        <button id="btn-repair-struct" class="py-1.5 px-2 rounded-xl font-semibold text-[11px] bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 border border-emerald-500/30 transition">
+                            🔧 Repair (25🪵)
+                        </button>
+                        <button id="btn-demolish-struct" class="py-1.5 px-2 rounded-xl font-semibold text-[11px] bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-500/30 transition">
+                            💥 Demolish (50%)
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <!-- =================================================================== -->
+    <!-- STEP 3 MODAL: HERO CRAFTING FORGE (Flame Sword, Crossbow, Armor)    -->
+    <!-- =================================================================== -->
+    <div id="forge-modal" class="hidden fixed inset-0 z-30 flex items-center justify-center bg-slate-950/70 backdrop-blur-sm p-4">
+        <div class="hud-glass-bright w-full max-w-lg rounded-3xl p-5 shadow-2xl border border-amber-400/40">
+            <div class="flex items-center justify-between pb-3 mb-3 border-b border-slate-700">
+                <div class="flex items-center gap-2.5">
+                    <span class="text-2xl">⚒️</span>
+                    <div>
+                        <h2 class="font-display font-bold text-base text-white">Hero Relics & Crafting Forge</h2>
+                        <p class="text-xs text-slate-400">Craft permanent 1st-Person weapons & Clash artifacts using looted Gems & Gold</p>
+                    </div>
+                </div>
+                <button id="btn-close-forge" class="px-2.5 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-300">✕ ESC</button>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <!-- 1. Flame Greatsword -->
+                <div class="p-3 rounded-2xl bg-slate-900/90 border border-slate-700/80 flex flex-col justify-between gap-2">
+                    <div>
+                        <div class="flex items-center justify-between">
+                            <span class="font-display font-bold text-amber-300 text-sm">🔥 Flame Greatsword</span>
+                            <span id="badge-forge-sword" class="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">Locked</span>
+                        </div>
+                        <p class="text-[11px] text-slate-300 mt-1">Ignites your 1st-Person blade! Deals 2.2× melee damage & cleaves nearby Goblins in one swing.</p>
+                    </div>
+                    <button data-craft="flameSword" class="craft-btn w-full py-2 rounded-xl font-bold bg-gradient-to-r from-amber-400 to-orange-500 text-slate-950 hover:opacity-95 transition">
+                        Craft (150🪙 80🪨 2💎)
+                    </button>
+                </div>
+
+                <!-- 2. Arcane Crossbow -->
+                <div class="p-3 rounded-2xl bg-slate-900/90 border border-slate-700/80 flex flex-col justify-between gap-2">
+                    <div>
+                        <div class="flex items-center justify-between">
+                            <span class="font-display font-bold text-fuchsia-300 text-sm">🏹 Arcane Crossbow</span>
+                            <span id="badge-forge-bow" class="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">Owned (Slot 2)</span>
+                        </div>
+                        <p class="text-[11px] text-slate-300 mt-1">Upgrades your Slot [2] Ranged Crossbow to fire high-velocity piercing Plasma Bolts (+100% damage).</p>
+                    </div>
+                    <button data-craft="arcaneBow" class="craft-btn w-full py-2 rounded-xl font-bold bg-gradient-to-r from-fuchsia-500 to-indigo-500 text-white hover:opacity-95 transition">
+                        Upgrade (120🪵 120🧪 2💎)
+                    </button>
+                </div>
+
+                <!-- 3. Titan Plate Armor -->
+                <div class="p-3 rounded-2xl bg-slate-900/90 border border-slate-700/80 flex flex-col justify-between gap-2">
+                    <div>
+                        <div class="flex items-center justify-between">
+                            <span class="font-display font-bold text-sky-300 text-sm">🛡️ Titan Plate Armor</span>
+                            <span id="badge-forge-armor" class="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">Locked</span>
+                        </div>
+                        <p class="text-[11px] text-slate-300 mt-1">Doubles Hero Max HP from 250 to 500 and triples passive health regeneration rate.</p>
+                    </div>
+                    <button data-craft="titanArmor" class="craft-btn w-full py-2 rounded-xl font-bold bg-gradient-to-r from-sky-400 to-blue-600 text-slate-950 hover:opacity-95 transition">
+                        Craft (140🪨 140🪙 2💎)
+                    </button>
+                </div>
+
+                <!-- 4. Master Builder Hammer -->
+                <div class="p-3 rounded-2xl bg-slate-900/90 border border-slate-700/80 flex flex-col justify-between gap-2">
+                    <div>
+                        <div class="flex items-center justify-between">
+                            <span class="font-display font-bold text-emerald-300 text-sm">🔨 Master Builder Rig</span>
+                            <span id="badge-forge-hammer" class="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">Locked</span>
+                        </div>
+                        <p class="text-[11px] text-slate-300 mt-1">2× resource yield when harvesting trees & ore veins, plus +35% faster Turret reload speed.</p>
+                    </div>
+                    <button data-craft="masterHammer" class="craft-btn w-full py-2 rounded-xl font-bold bg-gradient-to-r from-emerald-400 to-teal-500 text-slate-950 hover:opacity-95 transition">
+                        Craft (120🪵 120🪨 2💎)
+                    </button>
+                </div>
+            </div>
+
+            <div class="mt-4 pt-3 border-t border-slate-800 flex items-center justify-between text-[11px] text-slate-400">
+                <span>💡 Tip: Destroy red Goblin Outpost towers & golden chests to earn extra 💎 Gems!</span>
+                <button id="btn-reset-save" class="text-rose-400 hover:underline font-semibold">Reset Saved World</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- STATUS BANNER & HERO / TOWN HALL HEALTH STRIP -->
+    <div class="fixed bottom-24 left-1/2 -translate-x-1/2 z-20 flex flex-col items-center gap-1.5 pointer-events-none w-full max-w-2xl px-3">
+        <div id="status-toast" class="hud-glass px-4 py-1 rounded-full text-xs font-semibold text-amber-200 shadow-lg border border-amber-400/30 text-center">
+            👁️ 1st-Person Frustum Sight Active: Move mouse to look around (only tiles in your FOV cone render!) • Press [V] for Clash Isometric View
+        </div>
+        <div class="hud-glass px-3.5 py-1.5 rounded-2xl flex items-center gap-4 shadow-xl pointer-events-auto">
+            <div class="flex items-center gap-2">
+                <span class="text-sm">🦸</span>
+                <div class="w-28 sm:w-36">
+                    <div class="flex justify-between text-[10px] font-bold uppercase">
+                        <span id="hero-title-badge" class="text-amber-300">Hero HP</span>
+                        <span id="hero-hp-text" class="text-white font-mono">250/250</span>
+                    </div>
+                    <div class="w-full h-1.5 bg-slate-950 rounded-full overflow-hidden border border-slate-700">
+                        <div id="hero-hp-bar" class="h-full bg-gradient-to-r from-amber-400 to-emerald-400 transition-all" style="width: 100%"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="h-5 w-px bg-slate-700"></div>
+            <div class="flex items-center gap-2 cursor-pointer" id="th-status-chip" title="Click to inspect & upgrade Town Hall Core">
+                <span class="text-sm">🏰</span>
+                <div class="w-28 sm:w-36">
+                    <div class="flex justify-between text-[10px] font-bold uppercase">
+                        <span id="th-lvl-badge" class="text-sky-300">Town Hall Lv.1</span>
+                        <span id="th-hp-text" class="text-emerald-300 font-mono">1200/1200</span>
+                    </div>
+                    <div class="w-full h-1.5 bg-slate-950 rounded-full overflow-hidden border border-slate-700">
+                        <div id="th-hp-bar" class="h-full bg-gradient-to-r from-sky-400 to-emerald-400 transition-all" style="width: 100%"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- =================================================================== -->
+    <!-- BOTTOM 10-SLOT ACTION & CLASH BUILDING HOTBAR (Keys 1 - 0)          -->
+    <!-- =================================================================== -->
+    <nav class="fixed bottom-2 left-1/2 -translate-x-1/2 z-20 w-full max-w-5xl px-2 pointer-events-none">
+        <div class="hud-glass p-1.5 rounded-2xl grid grid-cols-5 sm:grid-cols-10 gap-1.5 pointer-events-auto shadow-2xl">
+            
+            <!-- [1] 1st-Person Sword / Pickaxe / Inspect -->
+            <button data-slot="action" class="slot-btn active flex flex-col items-center justify-center py-1.5 px-1 rounded-xl border border-slate-700/80 bg-slate-900/75 relative">
+                <span class="absolute top-1 left-1.5 text-[9px] font-mono font-bold text-slate-400">1</span>
+                <span class="text-lg sm:text-xl">⚔️</span>
+                <span class="font-display font-bold text-[11px] text-white leading-tight mt-0.5">Sword/Mine</span>
+                <span class="text-[9px] text-emerald-300 font-semibold">Melee + Upg</span>
+            </button>
+
+            <!-- [2] 1st-Person Arcane Crossbow + Spin Slash (Q) -->
+            <button data-slot="crossbow" class="slot-btn flex flex-col items-center justify-center py-1.5 px-1 rounded-xl border border-slate-700/80 bg-slate-900/75 relative">
+                <span class="absolute top-1 left-1.5 text-[9px] font-mono font-bold text-slate-400">2</span>
+                <span class="text-lg sm:text-xl">🏹</span>
+                <span class="font-display font-bold text-[11px] text-white leading-tight mt-0.5">Crossbow</span>
+                <span id="whirlwind-cd-text" class="text-[9px] text-sky-300 font-semibold">Ranged / [Q]</span>
+            </button>
+
+            <!-- [3] Fortified Stone Wall -->
+            <button data-slot="wall" class="slot-btn flex flex-col items-center justify-center py-1.5 px-1 rounded-xl border border-slate-700/80 bg-slate-900/75 relative">
+                <span class="absolute top-1 left-1.5 text-[9px] font-mono font-bold text-slate-400">3</span>
+                <span class="text-lg sm:text-xl">🧱</span>
+                <span class="font-display font-bold text-[11px] text-white leading-tight mt-0.5">Wall</span>
+                <span class="text-[9px] text-slate-300 font-semibold">15🪨</span>
+            </button>
+
+            <!-- [4] Gold Mine Collector -->
+            <button data-slot="goldmine" class="slot-btn flex flex-col items-center justify-center py-1.5 px-1 rounded-xl border border-slate-700/80 bg-slate-900/75 relative">
+                <span class="absolute top-1 left-1.5 text-[9px] font-mono font-bold text-slate-400">4</span>
+                <span class="text-lg sm:text-xl">⚙️</span>
+                <span class="font-display font-bold text-[11px] text-white leading-tight mt-0.5">Gold Mine</span>
+                <span class="text-[9px] text-amber-300 font-semibold">40🪵 20🪨</span>
+            </button>
+
+            <!-- [5] Elixir Collector Pump -->
+            <button data-slot="elixirmine" class="slot-btn flex flex-col items-center justify-center py-1.5 px-1 rounded-xl border border-slate-700/80 bg-slate-900/75 relative">
+                <span class="absolute top-1 left-1.5 text-[9px] font-mono font-bold text-slate-400">5</span>
+                <span class="text-lg sm:text-xl">🧪</span>
+                <span class="font-display font-bold text-[11px] text-white leading-tight mt-0.5">Elixir Pump</span>
+                <span class="text-[9px] text-fuchsia-300 font-semibold">40🪵 30🪙</span>
+            </button>
+
+            <!-- [6] Storage Vault (+600 Max Capacity) -->
+            <button data-slot="vault" class="slot-btn flex flex-col items-center justify-center py-1.5 px-1 rounded-xl border border-slate-700/80 bg-slate-900/75 relative">
+                <span class="absolute top-1 left-1.5 text-[9px] font-mono font-bold text-slate-400">6</span>
+                <span class="text-lg sm:text-xl">🏦</span>
+                <span class="font-display font-bold text-[11px] text-white leading-tight mt-0.5">Vault +Cap</span>
+                <span class="text-[9px] text-amber-200 font-semibold">60🪵 60🪨</span>
+            </button>
+
+            <!-- [7] Cannon Turret -->
+            <button data-slot="cannon" class="slot-btn flex flex-col items-center justify-center py-1.5 px-1 rounded-xl border border-slate-700/80 bg-slate-900/75 relative">
+                <span class="absolute top-1 left-1.5 text-[9px] font-mono font-bold text-slate-400">7</span>
+                <span class="text-lg sm:text-xl">💣</span>
+                <span class="font-display font-bold text-[11px] text-white leading-tight mt-0.5">Cannon</span>
+                <span class="text-[9px] text-yellow-300 font-semibold">50🪨 60🪙</span>
+            </button>
+
+            <!-- [8] Archer Watchtower -->
+            <button data-slot="archertower" class="slot-btn flex flex-col items-center justify-center py-1.5 px-1 rounded-xl border border-slate-700/80 bg-slate-900/75 relative">
+                <span class="absolute top-1 left-1.5 text-[9px] font-mono font-bold text-slate-400">8</span>
+                <span class="text-lg sm:text-xl">🏹</span>
+                <span class="font-display font-bold text-[11px] text-white leading-tight mt-0.5">Archer Twr</span>
+                <span class="text-[9px] text-emerald-300 font-semibold">70🪵 60🪙</span>
+            </button>
+
+            <!-- [9] Wizard Crystal Spire -->
+            <button data-slot="wizardtower" class="slot-btn flex flex-col items-center justify-center py-1.5 px-1 rounded-xl border border-slate-700/80 bg-slate-900/75 relative">
+                <span class="absolute top-1 left-1.5 text-[9px] font-mono font-bold text-slate-400">9</span>
+                <span class="text-lg sm:text-xl">🔮</span>
+                <span class="font-display font-bold text-[11px] text-white leading-tight mt-0.5">Wizard Twr</span>
+                <span class="text-[9px] text-fuchsia-300 font-semibold">70🪨 90🧪</span>
+            </button>
+
+            <!-- [0] Knight Barracks -->
+            <button data-slot="barracks" class="slot-btn flex flex-col items-center justify-center py-1.5 px-1 rounded-xl border border-slate-700/80 bg-slate-900/75 relative">
+                <span class="absolute top-1 left-1.5 text-[9px] font-mono font-bold text-slate-400">0</span>
+                <span class="text-lg sm:text-xl">🛡️</span>
+                <span class="font-display font-bold text-[11px] text-white leading-tight mt-0.5">Barracks</span>
+                <span class="text-[9px] text-sky-300 font-semibold">80🪵 80🧪</span>
+            </button>
+
+        </div>
+    </nav>
+
+    <script>
+        /***********************************************************************
+         * VOXEL CLASH: WORLD ENGINE (STEP 2 REFURBISHED + STEP 3 UPGRADE)
+         * 1. REAL-TIME VIEW FRUSTUM & SPATIAL CHUNK CULLING ENGINE:
+         *    - 120x120 world partitioned into 15x15 Spatial Chunks (225 chunks of 8x8 tiles).
+         *    - Every frame as the player moves or rotates their sight with the mouse,
+         *      we compute `THREE.Frustum` from `camera.projectionMatrix * camera.matrixWorldInverse`.
+         *    - Only chunks & tiles inside the active View Frustum (within Render Distance)
+         *      are packed into the GPU `THREE.InstancedMesh` buffer (`mesh.count = visibleTiles`).
+         *    - All 3D entities outside the camera's sight frustum have `mesh.visible = false`
+         *      while their economy & combat simulation continues seamlessly.
+         * 2. FIRST-PERSON POV + 3D HELD WEAPON VIEWMODEL + CLASH ISOMETRIC TOGGLE:
+         *    - Eye-level First-Person camera with 3D held Sword/Crossbow/Builder Hammer.
+         *    - Works seamlessly with Auto Hover-Sight or PointerLock, plus [V] toggle
+         *      to Clash of Clans 45° Tactical Isometric View.
+         * 3. STEP 3 CLASH SPELLS (Heal, Rage, Lightning), HERO FORGE & SAVE/LOAD.
+         ***********************************************************************/
+
+        // =====================================================================
+        // 1. WEB AUDIO RETRO SOUND SYNTHESIZER
+        // =====================================================================
+        const SoundFX = {
+            ctx: null,
+            init() {
+                if (!this.ctx) {
+                    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                    if (AudioCtx) this.ctx = new AudioCtx();
+                }
+            },
+            play(freq, type, duration, vol = 0.1, slideFreq = null) {
+                try {
+                    this.init();
+                    if (!this.ctx) return;
+                    if (this.ctx.state === 'suspended') this.ctx.resume();
+                    const osc = this.ctx.createOscillator();
+                    const gain = this.ctx.createGain();
+                    osc.type = type;
+                    osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
+                    if (slideFreq) {
+                        osc.frequency.exponentialRampToValueAtTime(slideFreq, this.ctx.currentTime + duration);
+                    }
+                    gain.gain.setValueAtTime(vol, this.ctx.currentTime);
+                    gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + duration);
+                    osc.connect(gain);
+                    gain.connect(this.ctx.destination);
+                    osc.start();
+                    osc.stop(this.ctx.currentTime + duration);
+                } catch (e) {}
+            },
+            swing() { this.play(270, 'triangle', 0.11, 0.12, 110); },
+            bowShot() { this.play(740, 'sawtooth', 0.1, 0.1, 280); },
+            hit() { this.play(190, 'sawtooth', 0.09, 0.12, 90); },
+            harvest() {
+                this.play(480, 'sine', 0.1, 0.12, 720);
+                setTimeout(() => this.play(720, 'sine', 0.14, 0.12, 960), 65);
+            },
+            chestLoot() {
+                [523, 659, 783, 1046].forEach((f, idx) => {
+                    setTimeout(() => this.play(f, 'triangle', 0.18, 0.15), idx * 65);
+                });
+            },
+            build() { this.play(320, 'square', 0.12, 0.1, 560); },
+            upgrade() {
+                this.play(400, 'triangle', 0.12, 0.14, 600);
+                setTimeout(() => this.play(600, 'triangle', 0.2, 0.14, 920), 90);
+            },
+            spellHeal() { this.play(440, 'sine', 0.35, 0.14, 880); },
+            spellRage() { this.play(220, 'sawtooth', 0.35, 0.14, 520); },
+            spellLightning() { this.play(150, 'sawtooth', 0.4, 0.2, 42); },
+            cannon() { this.play(110, 'sawtooth', 0.22, 0.16, 42); },
+            arrow() { this.play(680, 'sine', 0.08, 0.07, 320); },
+            magic() { this.play(540, 'sine', 0.18, 0.11, 880); },
+            horn() {
+                this.play(220, 'sawtooth', 0.45, 0.16, 215);
+                setTimeout(() => this.play(293, 'sawtooth', 0.55, 0.16, 290), 250);
+            },
+            error() { this.play(140, 'sawtooth', 0.15, 0.1, 105); }
+        };
+
+        // =====================================================================
+        // 2. WORLD CONSTANTS, STRUCTURES & GAME STATE
+        // =====================================================================
+        const GRID_SIZE = 120;         // 120x120 = 14,400 voxel tiles
+        const HALF_GRID = 60;          // Coordinates from -60 to +59
+        const TILE_SIZE = 2.0;         // 2x2 world units per tile
+        const CHUNK_SIZE = 8;          // 8x8 tiles per spatial chunk
+        const CHUNKS_PER_ROW = GRID_SIZE / CHUNK_SIZE; // 15x15 = 225 chunks
+
+        const STRUCTURE_DEFS = {
+            wall: {
+                name: 'Stone Wall', icon: '🧱', maxHp: 380,
+                cost: { wood: 0, stone: 15, gold: 0, elixir: 0 },
+                desc: 'Fortified cobblestone barrier with battlements that blocks Goblin raiders.'
+            },
+            goldmine: {
+                name: 'Gold Mine', icon: '⚙️', maxHp: 240,
+                cost: { wood: 40, stone: 20, gold: 0, elixir: 0 },
+                desc: 'Extracts +4 Gold/sec per level with a spinning golden ore wheel.'
+            },
+            elixirmine: {
+                name: 'Elixir Collector', icon: '🧪', maxHp: 240,
+                cost: { wood: 40, stone: 0, gold: 30, elixir: 0 },
+                desc: 'Pumps +4 Arcane Elixir/sec per level to fuel Spells, Towers & Knights.'
+            },
+            vault: {
+                name: 'Storage Vault', icon: '🏦', maxHp: 450,
+                cost: { wood: 60, stone: 60, gold: 0, elixir: 0 },
+                desc: 'Increases Max Wood, Stone, Gold & Elixir capacity by +600 per level.'
+            },
+            cannon: {
+                name: 'Cannon Turret', icon: '💣', maxHp: 340,
+                cost: { wood: 0, stone: 50, gold: 60, elixir: 0 },
+                range: 19, fireRate: 1.3, damage: 40,
+                desc: 'Heavy rotating iron cannon that blasts ground raiders.'
+            },
+            archertower: {
+                name: 'Archer Watchtower', icon: '🏹', maxHp: 300,
+                cost: { wood: 70, stone: 0, gold: 60, elixir: 0 },
+                range: 26, fireRate: 0.62, damage: 20,
+                desc: 'High timber watchtower with rapid long-range arrow volleys.'
+            },
+            wizardtower: {
+                name: 'Wizard Crystal Spire', icon: '🔮', maxHp: 320,
+                cost: { wood: 0, stone: 70, gold: 0, elixir: 90 },
+                range: 22, fireRate: 1.45, damage: 36, splash: 4.8,
+                desc: 'Casts explosive arcane bolts that deal splash damage to clustered enemies.'
+            },
+            barracks: {
+                name: 'Knight Barracks', icon: '🛡️', maxHp: 400,
+                cost: { wood: 80, stone: 0, gold: 0, elixir: 80 },
+                desc: 'Trains up to 2 Voxel Knights per level to follow you or guard the Town Hall.'
+            }
+        };
+
+        const GameState = {
+            wood: 240,
+            stone: 200,
+            gold: 200,
+            elixir: 180,
+            gems: 8,
+            maxStorage: 600,
+
+            selectedSlot: 'action',    // 'action' | 'crossbow' | structure key
+            povMode: 'fps',            // 'fps' (First-Person Sight) | 'clash' (Isometric RTS) | 'freepan'
+            autoHoverSight: true,      // Allows effortless mouse-sight in 1st-person without needing pointer-lock
+            renderDistance: 58,        // Configurable sight culling distance (meters/units)
+            timeOfDay: 0,
+
+            // Frustum Telemetry
+            renderedTilesCount: 0,
+            visibleEntitiesCount: 0,
+            activeChunksCount: 0,
+
+            // Hero Forge Upgrades (Step 3)
+            relics: {
+                flameSword: false,
+                arcaneBow: false,
+                titanArmor: false,
+                masterHammer: false
+            },
+
+            hoveredTile: { gx: 0, gz: 3 },
+            inspectedEntity: null,
+            knightStance: 'follow',
+
+            entities: new Map(),       // key "gx,gz" -> structure or resource node
+            turrets: [],
+            collectors: [],
+            barracksList: [],
+            outposts: [],
+            enemies: [],
+            knights: [],
+            projectiles: [],
+            spellZones: [],            // Active Heal & Rage rings on the ground
+            particles: [],
+
+            raidCountdown: 45,
+            waveNumber: 1
+        };
+
+        function tileKey(gx, gz) { return `${gx},${gz}`; }
+        function gridToWorld(gx, gz) { return { x: gx * TILE_SIZE, z: gz * TILE_SIZE }; }
+        function worldToGrid(wx, wz) {
+            return {
+                gx: Math.max(-HALF_GRID, Math.min(HALF_GRID - 1, Math.round(wx / TILE_SIZE))),
+                gz: Math.max(-HALF_GRID, Math.min(HALF_GRID - 1, Math.round(wz / TILE_SIZE)))
+            };
+        }
+
+        function hash2D(x, z) {
+            const n = Math.sin(x * 127.1 + z * 311.7) * 43758.5453123;
+            return n - Math.floor(n);
+        }
+        function smoothNoise(x, z) {
+            const ix = Math.floor(x), iz = Math.floor(z);
+            const fx = x - ix, fz = z - iz;
+            const u = fx * fx * (3 - 2 * fx);
+            const v = fz * fz * (3 - 2 * fz);
+            const a = hash2D(ix, iz);
+            const b = hash2D(ix + 1, iz);
+            const c = hash2D(ix, iz + 1);
+            const d = hash2D(ix + 1, iz + 1);
+            return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+        }
+
+        function getBiomeAndHeight(gx, gz) {
+            const dist = Math.hypot(gx, gz);
+            if (dist < 10) {
+                return { biome: 'plains', y: 0, isWater: false };
+            }
+            const n1 = smoothNoise(gx * 0.08, gz * 0.08);
+            const n2 = smoothNoise(gx * 0.18 + 50, gz * 0.18 + 50);
+            const combined = n1 * 0.75 + n2 * 0.25;
+
+            if (combined < 0.22 && dist > 13 && dist < 52) {
+                return { biome: 'water', y: -0.45, isWater: true };
+            }
+
+            let biome = 'plains';
+            if (dist > 44) biome = 'badlands';
+            else if (gx > 10 && gz > -20) biome = 'desert';
+            else if (gx < -10) biome = 'forest';
+
+            let y = 0;
+            if (combined > 0.72) y = 0.75;
+            else if (combined > 0.56) y = 0.35;
+
+            return { biome, y, isWater: false };
+        }
+
+        // =====================================================================
+        // 3. THREE.JS SCENE, CAMERA & ENHANCED CLASH + MINECRAFT LIGHTING
+        // =====================================================================
+        const canvas = document.getElementById('game-canvas');
+        const overlayContainer = document.getElementById('overlay-container');
+
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x38bdf8);
+        scene.fog = new THREE.FogExp2(0x38bdf8, 0.0085);
+
+        const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.2, 260);
+        scene.add(camera); // Added to scene so First-Person Held Weapon attached to camera renders!
+
+        const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+        // Warm Clash of Clans Sky-to-Grass Hemisphere Lighting
+        const hemiLight = new THREE.HemisphereLight(0xe0f2fe, 0x15803d, 0.78);
+        scene.add(hemiLight);
+
+        const sunLight = new THREE.DirectionalLight(0xfffbeb, 1.25);
+        sunLight.position.set(45, 78, 35);
+        sunLight.castShadow = true;
+        sunLight.shadow.mapSize.width = 2048;
+        sunLight.shadow.mapSize.height = 2048;
+        sunLight.shadow.camera.near = 8;
+        sunLight.shadow.camera.far = 190;
+        const shadowRange = 52;
+        sunLight.shadow.camera.left = -shadowRange;
+        sunLight.shadow.camera.right = shadowRange;
+        sunLight.shadow.camera.top = shadowRange;
+        sunLight.shadow.camera.bottom = -shadowRange;
+        sunLight.shadow.bias = -0.0005;
+        scene.add(sunLight);
+
+        const townHallLight = new THREE.PointLight(0xfbbf24, 1.25, 24);
+        townHallLight.position.set(0, 6, 0);
+        scene.add(townHallLight);
+
+        function cycleTimeOfDay() {
+            GameState.timeOfDay = (GameState.timeOfDay + 1) % 3;
+            const iconEl = document.getElementById('time-icon');
+
+            if (GameState.timeOfDay === 0) {
+                scene.background.setHex(0x38bdf8);
+                scene.fog.color.setHex(0x38bdf8);
+                hemiLight.intensity = 0.78;
+                sunLight.color.setHex(0xfffbeb);
+                sunLight.intensity = 1.25;
+                iconEl.textContent = '☀️';
+            } else if (GameState.timeOfDay === 1) {
+                scene.background.setHex(0x4c1d95);
+                scene.fog.color.setHex(0x4c1d95);
+                hemiLight.intensity = 0.55;
+                sunLight.color.setHex(0xf97316);
+                sunLight.intensity = 1.15;
+                iconEl.textContent = '🌅';
+            } else {
+                scene.background.setHex(0x070b16);
+                scene.fog.color.setHex(0x070b16);
+                hemiLight.intensity = 0.34;
+                sunLight.color.setHex(0x818cf8);
+                sunLight.intensity = 0.48;
+                iconEl.textContent = '🌙';
+            }
+        }
+
+        // =====================================================================
+        // 4. PROCEDURAL PIXEL ART TEXTURES (MINECRAFT + CLASH AESTHETIC)
+        // =====================================================================
+        function createPixelTexture(palette, borderAlpha = 0.15) {
+            const c = document.createElement('canvas');
+            c.width = 16;
+            c.height = 16;
+            const ctx = c.getContext('2d');
+            for (let y = 0; y < 16; y++) {
+                for (let x = 0; x < 16; x++) {
+                    const idx = Math.floor(hash2D(x * 3.1, y * 5.7) * palette.length);
+                    ctx.fillStyle = palette[idx];
+                    ctx.fillRect(x, y, 1, 1);
+                }
+            }
+            if (borderAlpha > 0) {
+                ctx.strokeStyle = `rgba(0,0,0,${borderAlpha})`;
+                ctx.lineWidth = 1;
+                ctx.strokeRect(0.5, 0.5, 15, 15);
+            }
+            const tex = new THREE.CanvasTexture(c);
+            tex.magFilter = THREE.NearestFilter;
+            tex.minFilter = THREE.NearestFilter;
+            return tex;
+        }
+
+        const Materials = {
+            terrainInstanced: new THREE.MeshStandardMaterial({
+                map: createPixelTexture(['#ffffff', '#f8fafc', '#e2e8f0', '#cbd5e1'], 0.18),
+                roughness: 0.82
+            }),
+            water: new THREE.MeshStandardMaterial({
+                color: 0x0284c7,
+                roughness: 0.18,
+                metalness: 0.12,
+                transparent: true,
+                opacity: 0.84
+            }),
+            cobble: new THREE.MeshStandardMaterial({
+                map: createPixelTexture(['#64748b', '#475569', '#94a3b8', '#334155'], 0.22),
+                roughness: 0.78
+            }),
+            woodBark: new THREE.MeshStandardMaterial({
+                map: createPixelTexture(['#78350f', '#92400e', '#451a03'], 0.16),
+                roughness: 0.88
+            }),
+            leavesEmerald: new THREE.MeshStandardMaterial({
+                map: createPixelTexture(['#15803d', '#166534', '#22c55e'], 0.14),
+                roughness: 0.78
+            }),
+            leavesDark: new THREE.MeshStandardMaterial({
+                map: createPixelTexture(['#064e3b', '#065f46', '#047857'], 0.14),
+                roughness: 0.78
+            }),
+            goldOre: new THREE.MeshStandardMaterial({
+                color: 0xfbbf24,
+                metalness: 0.55,
+                roughness: 0.22,
+                emissive: 0x78350f,
+                emissiveIntensity: 0.35
+            }),
+            flameBlade: new THREE.MeshStandardMaterial({
+                color: 0xf97316,
+                metalness: 0.3,
+                roughness: 0.2,
+                emissive: 0xea580c,
+                emissiveIntensity: 0.85
+            }),
+            elixirCrystal: new THREE.MeshStandardMaterial({
+                color: 0xd946ef,
+                metalness: 0.35,
+                roughness: 0.15,
+                emissive: 0x86198f,
+                emissiveIntensity: 0.6
+            }),
+            royalBlue: new THREE.MeshStandardMaterial({ color: 0x2563eb, roughness: 0.38 }),
+            crimsonRed: new THREE.MeshStandardMaterial({ color: 0xdc2626, roughness: 0.45 }),
+            darkIron: new THREE.MeshStandardMaterial({ color: 0x1e293b, metalness: 0.65, roughness: 0.32 })
+        };
+
+        // =====================================================================
+        // 5. SPATIAL CHUNK PARTITIONING & REAL-TIME VIEW FRUSTUM CULLING ENGINE
+        // =====================================================================
+        const totalWorldTiles = GRID_SIZE * GRID_SIZE; // 14,400
+        const terrainHeights = new Float32Array(totalWorldTiles);
+        const terrainBiomes = new Array(totalWorldTiles);
+        const precomputedTileMatrices = new Array(totalWorldTiles);
+        const precomputedTileColors = new Array(totalWorldTiles);
+
+        // 15x15 = 225 Spatial Chunks (each 8x8 tiles with a precomputed 3D Bounding Box)
+        const spatialChunks = [];
+        let terrainInstancedMesh = null;
+        let waterPlaneMesh = null;
+
+        const raycastGroundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+
+        function terrainIndex(gx, gz) {
+            return (gz + HALF_GRID) * GRID_SIZE + (gx + HALF_GRID);
+        }
+
+        function getTileHeight(gx, gz) {
+            if (gx < -HALF_GRID || gx >= HALF_GRID || gz < -HALF_GRID || gz >= HALF_GRID) return 0;
+            return terrainHeights[terrainIndex(gx, gz)] || 0;
+        }
+
+        function getTileBiome(gx, gz) {
+            if (gx < -HALF_GRID || gx >= HALF_GRID || gz < -HALF_GRID || gz >= HALF_GRID) return 'plains';
+            return terrainBiomes[terrainIndex(gx, gz)] || 'plains';
+        }
+
+        function initSpatialChunkWorld() {
+            const boxGeo = new THREE.BoxGeometry(TILE_SIZE, 2.0, TILE_SIZE);
+            terrainInstancedMesh = new THREE.InstancedMesh(boxGeo, Materials.terrainInstanced, totalWorldTiles);
+            terrainInstancedMesh.receiveShadow = true;
+            // Disable Three.js whole-mesh frustum test since we dynamically pack visible instances
+            terrainInstancedMesh.frustumCulled = false;
+
+            const dummy = new THREE.Object3D();
+            const color = new THREE.Color();
+
+            // 1. Precompute transform matrices & colors for all 14,400 tiles
+            for (let gz = -HALF_GRID; gz < HALF_GRID; gz++) {
+                for (let gx = -HALF_GRID; gx < HALF_GRID; gx++) {
+                    const { biome, y } = getBiomeAndHeight(gx, gz);
+                    const tIdx = terrainIndex(gx, gz);
+                    terrainHeights[tIdx] = y;
+                    terrainBiomes[tIdx] = biome;
+
+                    const { x, z } = gridToWorld(gx, gz);
+                    dummy.position.set(x, y - 1.0, z);
+                    dummy.updateMatrix();
+                    precomputedTileMatrices[tIdx] = dummy.matrix.clone();
+
+                    const isEven = (gx + gz) % 2 === 0;
+                    if (biome === 'plains') color.setHex(isEven ? 0x4ade80 : 0x22c55e);
+                    else if (biome === 'desert') color.setHex(isEven ? 0xfde047 : 0xfacc15);
+                    else if (biome === 'forest') color.setHex(isEven ? 0x15803d : 0x166534);
+                    else if (biome === 'badlands') color.setHex(isEven ? 0x475569 : 0x334155);
+                    else if (biome === 'water') color.setHex(0x0369a1);
+
+                    precomputedTileColors[tIdx] = color.clone();
+                }
+            }
+
+            // 2. Partition into 15x15 Spatial Chunks of 8x8 tiles
+            for (let cz = 0; cz < CHUNKS_PER_ROW; cz++) {
+                for (let cx = 0; cx < CHUNKS_PER_ROW; cx++) {
+                    const startGx = -HALF_GRID + cx * CHUNK_SIZE;
+                    const startGz = -HALF_GRID + cz * CHUNK_SIZE;
+                    const endGx = startGx + CHUNK_SIZE;
+                    const endGz = startGz + CHUNK_SIZE;
+
+                    const minWorld = gridToWorld(startGx, startGz);
+                    const maxWorld = gridToWorld(endGx - 1, endGz - 1);
+
+                    const boundingBox = new THREE.Box3(
+                        new THREE.Vector3(minWorld.x - TILE_SIZE, -3.5, minWorld.z - TILE_SIZE),
+                        new THREE.Vector3(maxWorld.x + TILE_SIZE, 6.0, maxWorld.z + TILE_SIZE)
+                    );
+                    const center = new THREE.Vector3(
+                        (minWorld.x + maxWorld.x) * 0.5,
+                        0,
+                        (minWorld.z + maxWorld.z) * 0.5
+                    );
+
+                    const tileIndices = [];
+                    for (let gz = startGz; gz < endGz; gz++) {
+                        for (let gx = startGx; gx < endGx; gx++) {
+                            tileIndices.push({
+                                tIdx: terrainIndex(gx, gz),
+                                wx: gx * TILE_SIZE,
+                                wz: gz * TILE_SIZE
+                            });
+                        }
+                    }
+
+                    spatialChunks.push({
+                        cx, cz,
+                        boundingBox,
+                        center,
+                        tileIndices,
+                        isVisible: false
+                    });
+                }
+            }
+
+            scene.add(terrainInstancedMesh);
+
+            // Animated Water Plane
+            const waterGeo = new THREE.PlaneGeometry(GRID_SIZE * TILE_SIZE, GRID_SIZE * TILE_SIZE);
+            waterGeo.rotateX(-Math.PI / 2);
+            waterPlaneMesh = new THREE.Mesh(waterGeo, Materials.water);
+            waterPlaneMesh.position.y = -0.22;
+            scene.add(waterPlaneMesh);
+        }
+        initSpatialChunkWorld();
+
+        // Real-Time View Frustum Culling Objects
+        const viewFrustum = new THREE.Frustum();
+        const projScreenMatrix = new THREE.Matrix4();
+        const tempTileSphere = new THREE.Sphere(new THREE.Vector3(), TILE_SIZE * 1.15);
+        const tempEntitySphere = new THREE.Sphere(new THREE.Vector3(), 3.2);
+
+        /**
+         * Updates the GPU InstancedMesh and 3D Entity visibility so ONLY tiles & objects
+         * inside the camera's live View Frustum (and within Render Distance) are rendered!
+         */
+        function updateViewFrustumCulling() {
+            camera.updateMatrixWorld();
+            projScreenMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+            viewFrustum.setFromProjectionMatrix(projScreenMatrix);
+
+            const originX = GameState.povMode === 'freepan' ? CameraRig.target.x : Hero.group.position.x;
+            const originZ = GameState.povMode === 'freepan' ? CameraRig.target.z : Hero.group.position.z;
+            const maxDist = GameState.renderDistance;
+            const maxDistSq = maxDist * maxDist;
+            // Small immediate radius under Hero feet always rendered so player never stands on air
+            const nearSafetySq = 7.5 * 7.5;
+
+            let visibleTiles = 0;
+            let activeChunks = 0;
+
+            for (let i = 0; i < spatialChunks.length; i++) {
+                const chunk = spatialChunks[i];
+                const dx = chunk.center.x - originX;
+                const dz = chunk.center.z - originZ;
+                const chunkDistSq = dx * dx + dz * dz;
+
+                // Quick chunk distance + 3D Frustum Box intersection check
+                const chunkNearHero = chunkDistSq < 196; // within 14m of Hero
+                if (chunkDistSq <= (maxDist + 14) * (maxDist + 14) &&
+                    (chunkNearHero || viewFrustum.intersectsBox(chunk.boundingBox))) {
+
+                    chunk.isVisible = true;
+                    activeChunks++;
+
+                    const tiles = chunk.tileIndices;
+                    for (let j = 0; j < tiles.length; j++) {
+                        const tile = tiles[j];
+                        const tdx = tile.wx - originX;
+                        const tdz = tile.wz - originZ;
+                        const dSq = tdx * tdx + tdz * tdz;
+
+                        if (dSq <= nearSafetySq) {
+                            terrainInstancedMesh.setMatrixAt(visibleTiles, precomputedTileMatrices[tile.tIdx]);
+                            terrainInstancedMesh.setColorAt(visibleTiles, precomputedTileColors[tile.tIdx]);
+                            visibleTiles++;
+                        } else if (dSq <= maxDistSq) {
+                            tempTileSphere.center.set(tile.wx, 0, tile.wz);
+                            if (viewFrustum.intersectsSphere(tempTileSphere)) {
+                                terrainInstancedMesh.setMatrixAt(visibleTiles, precomputedTileMatrices[tile.tIdx]);
+                                terrainInstancedMesh.setColorAt(visibleTiles, precomputedTileColors[tile.tIdx]);
+                                visibleTiles++;
+                            }
+                        }
+                    }
+                } else {
+                    chunk.isVisible = false;
+                }
+            }
+
+            // Set exact GPU instance draw count to ONLY the visible frustum tiles!
+            terrainInstancedMesh.count = visibleTiles;
+            terrainInstancedMesh.instanceMatrix.needsUpdate = true;
+            if (terrainInstancedMesh.instanceColor) {
+                terrainInstancedMesh.instanceColor.needsUpdate = true;
+            }
+
+            // Cull 3D Entities (Trees, Ores, Outposts, Structures, Chests) outside View Frustum
+            let visibleEntities = 0;
+            GameState.entities.forEach(ent => {
+                const pos = ent.mesh.position;
+                const dx = pos.x - originX;
+                const dz = pos.z - originZ;
+                const dSq = dx * dx + dz * dz;
+
+                if (dSq <= nearSafetySq) {
+                    ent.mesh.visible = true;
+                    visibleEntities++;
+                } else if (dSq <= maxDistSq) {
+                    tempEntitySphere.center.set(pos.x, pos.y + 1.2, pos.z);
+                    const inSight = viewFrustum.intersectsSphere(tempEntitySphere);
+                    ent.mesh.visible = inSight;
+                    if (inSight) visibleEntities++;
+                } else {
+                    ent.mesh.visible = false;
+                }
+            });
+
+            // Cull Enemies & Friendly Knights outside View Frustum while keeping their AI running
+            GameState.enemies.forEach(en => {
+                const pos = en.mesh.position;
+                const dSq = (pos.x - originX) ** 2 + (pos.z - originZ) ** 2;
+                tempEntitySphere.center.set(pos.x, pos.y + 1.0, pos.z);
+                en.mesh.visible = dSq <= maxDistSq && (dSq <= nearSafetySq || viewFrustum.intersectsSphere(tempEntitySphere));
+            });
+
+            GameState.knights.forEach(kn => {
+                const pos = kn.mesh.position;
+                const dSq = (pos.x - originX) ** 2 + (pos.z - originZ) ** 2;
+                tempEntitySphere.center.set(pos.x, pos.y + 1.0, pos.z);
+                kn.mesh.visible = dSq <= maxDistSq && (dSq <= nearSafetySq || viewFrustum.intersectsSphere(tempEntitySphere));
+            });
+
+            GameState.renderedTilesCount = visibleTiles;
+            GameState.visibleEntitiesCount = visibleEntities;
+            GameState.activeChunksCount = activeChunks;
+        }
+
+        // 3D Target Tile Selection Cursor + Holographic Building Preview
+        const cursorGroup = new THREE.Group();
+        const cursorFillMat = new THREE.MeshBasicMaterial({ color: 0x34d399, transparent: true, opacity: 0.32, depthWrite: false });
+        const cursorFill = new THREE.Mesh(new THREE.BoxGeometry(TILE_SIZE * 0.98, 0.25, TILE_SIZE * 0.98), cursorFillMat);
+        cursorFill.position.y = 0.14;
+        cursorGroup.add(cursorFill);
+
+        const cursorLineMat = new THREE.LineBasicMaterial({ color: 0x6ee7b7 });
+        const cursorWire = new THREE.LineSegments(
+            new THREE.EdgesGeometry(new THREE.BoxGeometry(TILE_SIZE, 0.3, TILE_SIZE)),
+            cursorLineMat
+        );
+        cursorWire.position.y = 0.15;
+        cursorGroup.add(cursorWire);
+
+        // Holographic Ghost Box when placing Clash Buildings
+        const holoMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8, wireframe: true, transparent: true, opacity: 0.65 });
+        const holoBox = new THREE.Mesh(new THREE.BoxGeometry(1.75, 1.6, 1.75), holoMat);
+        holoBox.position.y = 0.9;
+        holoBox.visible = false;
+        cursorGroup.add(holoBox);
+
+        scene.add(cursorGroup);
+
+        // =====================================================================
+        // 6. FIRST-PERSON 3D HELD WEAPON / TOOL VIEWMODEL (ATTACHED TO CAMERA)
+        // =====================================================================
+        const FirstPersonViewmodel = {
+            root: new THREE.Group(),
+            swordGroup: new THREE.Group(),
+            swordBlade: null,
+            crossbowGroup: new THREE.Group(),
+            hammerGroup: new THREE.Group(),
+            swingTimer: 0,
+            bobTimer: 0,
+
+            init() {
+                // Position at bottom-right of First-Person camera view (like Minecraft)
+                this.root.position.set(0.55, -0.46, -0.82);
+
+                // 1. 3D Voxel Greatsword
+                const hilt = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.22, 0.08), Materials.woodBark);
+                const guard = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.06, 0.1), Materials.goldOre);
+                guard.position.y = 0.12;
+                this.swordBlade = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.68, 0.05), Materials.goldOre);
+                this.swordBlade.position.y = 0.48;
+                this.swordGroup.add(hilt, guard, this.swordBlade);
+                this.swordGroup.rotation.set(-0.35, -0.3, 0.15);
+                this.root.add(this.swordGroup);
+
+                // 2. 3D Arcane Crossbow
+                const stock = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.12, 0.55), Materials.woodBark);
+                const bowArc = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.06, 0.08), Materials.darkIron);
+                bowArc.position.set(0, 0.02, -0.2);
+                const boltCrystal = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.06, 0.35), Materials.elixirCrystal);
+                boltCrystal.position.set(0, 0.07, -0.1);
+                this.crossbowGroup.add(stock, bowArc, boltCrystal);
+                this.crossbowGroup.rotation.set(0.1, -0.15, 0);
+                this.crossbowGroup.visible = false;
+                this.root.add(this.crossbowGroup);
+
+                // 3. 3D Clash Builder's Hammer
+                const handle = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.5, 0.07), Materials.woodBark);
+                const head = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.18, 0.18), Materials.cobble);
+                head.position.y = 0.25;
+                const goldTrim = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.06, 0.2), Materials.goldOre);
+                goldTrim.position.y = 0.25;
+                this.hammerGroup.add(handle, head, goldTrim);
+                this.hammerGroup.rotation.set(-0.3, -0.4, 0.1);
+                this.hammerGroup.visible = false;
+                this.root.add(this.hammerGroup);
+
+                camera.add(this.root);
+            },
+
+            updateToolAppearance() {
+                const slot = GameState.selectedSlot;
+                this.swordGroup.visible = (slot === 'action');
+                this.crossbowGroup.visible = (slot === 'crossbow');
+                this.hammerGroup.visible = (slot !== 'action' && slot !== 'crossbow');
+
+                if (this.swordBlade) {
+                    this.swordBlade.material = GameState.relics.flameSword ? Materials.flameBlade : Materials.goldOre;
+                }
+            },
+
+            triggerActionSwing() {
+                this.swingTimer = 1.0;
+            },
+
+            update(dt, isMoving) {
+                this.root.visible = (GameState.povMode === 'fps');
+                if (!this.root.visible) return;
+
+                if (isMoving) {
+                    this.bobTimer += dt * 11;
+                } else {
+                    this.bobTimer += dt * 1.8;
+                }
+
+                const bobX = Math.cos(this.bobTimer) * (isMoving ? 0.035 : 0.008);
+                const bobY = Math.abs(Math.sin(this.bobTimer)) * (isMoving ? 0.04 : 0.008);
+
+                let swingPitch = 0;
+                let swingZ = 0;
+                if (this.swingTimer > 0) {
+                    this.swingTimer = Math.max(0, this.swingTimer - dt * 6.5);
+                    const s = Math.sin(this.swingTimer * Math.PI);
+                    swingPitch = -s * 0.95;
+                    swingZ = -s * 0.22;
+                }
+
+                this.root.position.set(0.55 + bobX, -0.46 + bobY, -0.82 + swingZ);
+                this.root.rotation.set(swingPitch, -swingPitch * 0.4, 0);
+            }
+        };
+        FirstPersonViewmodel.init();
+
+        // =====================================================================
+        // 7. CLASH OF CLANS STRUCTURES, GOBLIN OUTPOSTS & LOOT CHESTS
+        // =====================================================================
+        const entitiesGroup = new THREE.Group();
+        scene.add(entitiesGroup);
+
+        let townHallCrystal = null;
+
+        function createTownHallCore() {
+            const group = new THREE.Group();
+
+            // Multi-tiered Clash of Clans Keep with Royal Blue Roof & Golden Trim
+            const foundation = new THREE.Mesh(new THREE.BoxGeometry(2.5, 0.5, 2.5), Materials.cobble);
+            foundation.position.y = 0.25;
+            foundation.receiveShadow = true;
+            group.add(foundation);
+
+            const base = new THREE.Mesh(new THREE.BoxGeometry(2.2, 1.4, 2.2), Materials.cobble);
+            base.position.y = 1.1;
+            base.castShadow = true;
+            base.receiveShadow = true;
+            group.add(base);
+
+            const pillarGeo = new THREE.BoxGeometry(0.55, 2.3, 0.55);
+            [[-0.92, -0.92], [0.92, -0.92], [-0.92, 0.92], [0.92, 0.92]].forEach(([px, pz]) => {
+                const p = new THREE.Mesh(pillarGeo, Materials.cobble);
+                p.position.set(px, 1.25, pz);
+                p.castShadow = true;
+                group.add(p);
+
+                const cap = new THREE.Mesh(new THREE.BoxGeometry(0.65, 0.22, 0.65), Materials.goldOre);
+                cap.position.set(px, 2.48, pz);
+                group.add(cap);
+            });
+
+            const roof = new THREE.Mesh(new THREE.BoxGeometry(1.95, 0.85, 1.95), Materials.royalBlue);
+            roof.position.y = 2.05;
+            roof.castShadow = true;
+            group.add(roof);
+
+            const banner = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.9, 0.1), Materials.goldOre);
+            banner.position.set(0, 1.3, 1.14);
+            group.add(banner);
+
+            townHallCrystal = new THREE.Mesh(new THREE.OctahedronGeometry(0.62, 0), Materials.goldOre);
+            townHallCrystal.position.y = 3.35;
+            townHallCrystal.castShadow = true;
+            group.add(townHallCrystal);
+
+            group.position.set(0, 0, 0);
+            entitiesGroup.add(group);
+
+            const entity = {
+                type: 'townhall',
+                name: 'Town Hall Core',
+                icon: '🏰',
+                gx: 0, gz: 0,
+                level: 1,
+                hp: 1200, maxHp: 1200,
+                isPlayerStructure: true,
+                mesh: group
+            };
+            group.userData = { entity };
+            GameState.entities.set(tileKey(0, 0), entity);
+        }
+
+        function createResourceNode(gx, gz, kind) {
+            const key = tileKey(gx, gz);
+            if (GameState.entities.has(key)) return;
+            const y = getTileHeight(gx, gz);
+            const { x, z } = gridToWorld(gx, gz);
+            const group = new THREE.Group();
+
+            let entity = null;
+
+            if (kind === 'tree' || kind === 'darktree') {
+                const trunk = new THREE.Mesh(new THREE.BoxGeometry(0.58, 1.5, 0.58), Materials.woodBark);
+                trunk.position.y = 0.75;
+                trunk.castShadow = true;
+                group.add(trunk);
+
+                const leafMat = kind === 'darktree' ? Materials.leavesDark : Materials.leavesEmerald;
+                const canopy1 = new THREE.Mesh(new THREE.BoxGeometry(1.55, 0.95, 1.55), leafMat);
+                canopy1.position.y = 1.75;
+                canopy1.castShadow = true;
+                group.add(canopy1);
+
+                const canopy2 = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.75, 1.0), leafMat);
+                canopy2.position.y = 2.45;
+                canopy2.castShadow = true;
+                group.add(canopy2);
+
+                entity = {
+                    type: 'resource', subType: 'tree', name: kind === 'darktree' ? 'Ancient Pine' : 'Oak Tree',
+                    gx, gz, hp: 3, maxHp: 3,
+                    reward: { wood: kind === 'darktree' ? 28 : 18, stone: 0, gold: 0, elixir: 0 },
+                    hitColor: 0x22c55e, mesh: group
+                };
+            } else if (kind === 'stone' || kind === 'gold') {
+                const rock = new THREE.Mesh(new THREE.BoxGeometry(1.4, 1.1, 1.4), Materials.cobble);
+                rock.position.y = 0.55;
+                rock.castShadow = true;
+                group.add(rock);
+
+                const topRock = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.65, 0.9), Materials.cobble);
+                topRock.position.set(0.15, 1.15, -0.1);
+                group.add(topRock);
+
+                if (kind === 'gold') {
+                    [[-0.45, 0.65, 0.6], [0.45, 0.5, 0.6], [0.15, 1.48, -0.1]].forEach(([nx, ny, nz]) => {
+                        const nug = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.36, 0.36), Materials.goldOre);
+                        nug.position.set(nx, ny, nz);
+                        group.add(nug);
+                    });
+                }
+
+                entity = {
+                    type: 'resource', subType: kind, name: kind === 'gold' ? 'Rich Gold Vein' : 'Granite Deposit',
+                    gx, gz, hp: 4, maxHp: 4,
+                    reward: kind === 'gold'
+                        ? { wood: 0, stone: 12, gold: 26, elixir: 0 }
+                        : { wood: 0, stone: 26, gold: 5, elixir: 0 },
+                    hitColor: kind === 'gold' ? 0xfbbf24 : 0x94a3b8, mesh: group
+                };
+            } else if (kind === 'elixir') {
+                for (let i = 0; i < 3; i++) {
+                    const spire = new THREE.Mesh(
+                        new THREE.BoxGeometry(0.45, 1.3 + i * 0.35, 0.45),
+                        Materials.elixirCrystal
+                    );
+                    spire.position.set((i - 1) * 0.42, 0.65 + i * 0.15, (i % 2 === 0 ? 0.2 : -0.2));
+                    spire.rotation.z = (i - 1) * 0.18;
+                    spire.castShadow = true;
+                    group.add(spire);
+                }
+                entity = {
+                    type: 'resource', subType: 'elixir', name: 'Raw Elixir Crystal',
+                    gx, gz, hp: 4, maxHp: 4,
+                    reward: { wood: 0, stone: 10, gold: 0, elixir: 34 },
+                    hitColor: 0xd946ef, mesh: group
+                };
+            }
+
+            group.position.set(x, y, z);
+            entitiesGroup.add(group);
+            group.userData = { entity };
+            GameState.entities.set(key, entity);
+        }
+
+        function createLootChest(gx, gz, isBossChest = false) {
+            const key = tileKey(gx, gz);
+            if (GameState.entities.has(key)) return;
+            const y = getTileHeight(gx, gz);
+            const { x, z } = gridToWorld(gx, gz);
+            const group = new THREE.Group();
+
+            const box = new THREE.Mesh(
+                new THREE.BoxGeometry(1.3, 0.95, 1.0),
+                isBossChest ? Materials.goldOre : Materials.woodBark
+            );
+            box.position.y = 0.48;
+            box.castShadow = true;
+            group.add(box);
+
+            const trim = new THREE.Mesh(
+                new THREE.BoxGeometry(1.36, 0.25, 1.06),
+                isBossChest ? Materials.elixirCrystal : Materials.goldOre
+            );
+            trim.position.y = 0.78;
+            group.add(trim);
+
+            group.position.set(x, y, z);
+            entitiesGroup.add(group);
+
+            const entity = {
+                type: 'chest',
+                name: isBossChest ? 'Ancient Royal Loot Chest' : 'Goblin Supply Chest',
+                gx, gz,
+                hp: isBossChest ? 4 : 2,
+                maxHp: isBossChest ? 4 : 2,
+                reward: isBossChest
+                    ? { wood: 120, stone: 120, gold: 280, elixir: 200, gems: 3 }
+                    : { wood: 60, stone: 60, gold: 140, elixir: 90, gems: 1 },
+                hitColor: 0xfbbf24,
+                mesh: group
+            };
+            group.userData = { entity };
+            GameState.entities.set(key, entity);
+            return entity;
+        }
+
+        function createPlayerStructure(gx, gz, type, savedLevel = 1) {
+            const def = STRUCTURE_DEFS[type];
+            if (!def) return null;
+
+            const y = getTileHeight(gx, gz);
+            const { x, z } = gridToWorld(gx, gz);
+            const group = new THREE.Group();
+            let turretHead = null;
+            let rotorMesh = null;
+
+            if (type === 'wall') {
+                const body = new THREE.Mesh(new THREE.BoxGeometry(1.92, 1.45, 1.92), Materials.cobble);
+                body.position.y = 0.725;
+                body.castShadow = true;
+                body.receiveShadow = true;
+                group.add(body);
+
+                // Clash-style crenellation cap
+                const cap = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.28, 1.5), Materials.goldOre);
+                cap.position.y = 1.52;
+                group.add(cap);
+            } else if (type === 'goldmine') {
+                const base = new THREE.Mesh(new THREE.BoxGeometry(1.85, 0.85, 1.85), Materials.woodBark);
+                base.position.y = 0.425;
+                base.castShadow = true;
+                group.add(base);
+                const smelter = new THREE.Mesh(new THREE.BoxGeometry(1.25, 0.95, 1.25), Materials.cobble);
+                smelter.position.y = 1.1;
+                group.add(smelter);
+                rotorMesh = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.48, 0.9), Materials.goldOre);
+                rotorMesh.position.y = 1.9;
+                group.add(rotorMesh);
+            } else if (type === 'elixirmine') {
+                const base = new THREE.Mesh(new THREE.BoxGeometry(1.85, 0.7, 1.85), Materials.cobble);
+                base.position.y = 0.35;
+                group.add(base);
+                const vat = new THREE.Mesh(new THREE.BoxGeometry(1.3, 1.4, 1.3), Materials.elixirCrystal);
+                vat.position.y = 1.25;
+                vat.castShadow = true;
+                group.add(vat);
+                rotorMesh = new THREE.Mesh(new THREE.OctahedronGeometry(0.48, 0), Materials.elixirCrystal);
+                rotorMesh.position.y = 2.4;
+                group.add(rotorMesh);
+            } else if (type === 'vault') {
+                const body = new THREE.Mesh(new THREE.BoxGeometry(1.88, 1.45, 1.88), Materials.cobble);
+                body.position.y = 0.725;
+                body.castShadow = true;
+                group.add(body);
+                const dome = new THREE.Mesh(new THREE.BoxGeometry(1.45, 0.6, 1.45), Materials.goldOre);
+                dome.position.y = 1.7;
+                group.add(dome);
+            } else if (type === 'cannon') {
+                const base = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.85, 1.8), Materials.cobble);
+                base.position.y = 0.425;
+                base.castShadow = true;
+                group.add(base);
+
+                turretHead = new THREE.Group();
+                turretHead.position.y = 1.18;
+                const carriage = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.65, 1.05), Materials.woodBark);
+                turretHead.add(carriage);
+                const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.54, 0.54, 1.55), Materials.darkIron);
+                barrel.position.set(0, 0.12, 0.58);
+                barrel.castShadow = true;
+                turretHead.add(barrel);
+                group.add(turretHead);
+            } else if (type === 'archertower') {
+                const legs = new THREE.Mesh(new THREE.BoxGeometry(1.5, 2.35, 1.5), Materials.woodBark);
+                legs.position.y = 1.175;
+                legs.castShadow = true;
+                group.add(legs);
+
+                const deck = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.48, 1.9), Materials.cobble);
+                deck.position.y = 2.5;
+                group.add(deck);
+
+                turretHead = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.88, 0.68), Materials.royalBlue);
+                turretHead.position.y = 3.12;
+                group.add(turretHead);
+            } else if (type === 'wizardtower') {
+                const spire = new THREE.Mesh(new THREE.BoxGeometry(1.65, 2.2, 1.65), Materials.cobble);
+                spire.position.y = 1.1;
+                spire.castShadow = true;
+                group.add(spire);
+
+                rotorMesh = new THREE.Mesh(new THREE.OctahedronGeometry(0.62, 0), Materials.elixirCrystal);
+                rotorMesh.position.y = 2.95;
+                group.add(rotorMesh);
+                turretHead = rotorMesh;
+            } else if (type === 'barracks') {
+                const hall = new THREE.Mesh(new THREE.BoxGeometry(1.9, 1.35, 1.9), Materials.cobble);
+                hall.position.y = 0.675;
+                hall.castShadow = true;
+                group.add(hall);
+                const roof = new THREE.Mesh(new THREE.BoxGeometry(1.65, 0.68, 1.65), Materials.crimsonRed);
+                roof.position.y = 1.68;
+                group.add(roof);
+            }
+
+            group.position.set(x, y, z);
+            group.scale.set(0.2, 0.2, 0.2);
+            entitiesGroup.add(group);
+
+            const levelMult = Math.pow(1.3, savedLevel - 1);
+            const entity = {
+                type,
+                name: def.name,
+                icon: def.icon,
+                gx, gz,
+                level: savedLevel,
+                hp: Math.round(def.maxHp * levelMult),
+                maxHp: Math.round(def.maxHp * levelMult),
+                cost: { ...def.cost },
+                isPlayerStructure: true,
+                mesh: group,
+                turretHead,
+                rotorMesh,
+                spawnScale: 0.2,
+                targetScale: 1 + (savedLevel - 1) * 0.08,
+                cooldown: 0,
+                range: def.range || 0,
+                fireRate: def.fireRate || 1,
+                damage: Math.round((def.damage || 0) * levelMult),
+                splash: def.splash || 0
+            };
+
+            group.userData = { entity };
+            GameState.entities.set(tileKey(gx, gz), entity);
+
+            if (type === 'goldmine' || type === 'elixirmine') {
+                GameState.collectors.push(entity);
+            } else if (type === 'cannon' || type === 'archertower' || type === 'wizardtower') {
+                GameState.turrets.push(entity);
+            } else if (type === 'vault') {
+                recalculateStorageCapacity();
+            } else if (type === 'barracks') {
+                GameState.barracksList.push(entity);
+                maintainKnightSquad();
+            }
+
+            return entity;
+        }
+
+        function recalculateStorageCapacity() {
+            let cap = 600;
+            GameState.entities.forEach(ent => {
+                if (ent.type === 'vault') cap += 600 * ent.level;
+                else if (ent.type === 'townhall') cap += (ent.level - 1) * 400;
+            });
+            GameState.maxStorage = cap;
+            updateHUD();
+        }
+
+        function createGoblinOutpost(cx, cz, index) {
+            const y = getTileHeight(cx, cz);
+            const { x, z } = gridToWorld(cx, cz);
+
+            const group = new THREE.Group();
+            const tower = new THREE.Mesh(new THREE.BoxGeometry(1.9, 2.4, 1.9), Materials.woodBark);
+            tower.position.y = 1.2;
+            tower.castShadow = true;
+            group.add(tower);
+
+            const banner = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.7, 1.6), Materials.crimsonRed);
+            banner.position.y = 2.65;
+            group.add(banner);
+
+            group.position.set(x, y, z);
+            entitiesGroup.add(group);
+
+            const outpostCore = {
+                type: 'outpost_tower',
+                name: `Goblin Outpost #${index + 1}`,
+                gx: cx, gz: cz,
+                hp: 8, maxHp: 8,
+                reward: { wood: 80, stone: 80, gold: 160, elixir: 110, gems: 2 },
+                hitColor: 0xef4444,
+                mesh: group
+            };
+            group.userData = { entity: outpostCore };
+            GameState.entities.set(tileKey(cx, cz), outpostCore);
+
+            createLootChest(cx + 2, cz, true);
+            createLootChest(cx - 2, cz + 1, false);
+
+            spawnEnemyUnit(cx + 1, cz + 2, 'goblin', { x, z });
+            spawnEnemyUnit(cx - 1, cz - 2, 'goblin', { x, z });
+            if (index % 2 === 0) {
+                spawnEnemyUnit(cx, cz + 2, 'boss', { x, z });
+            }
+
+            GameState.outposts.push({ gx: cx, gz: cz, core: outpostCore });
+        }
+
+        function populateMassiveWorld() {
+            createTownHallCore();
+
+            const starterRing = [
+                { gx: -4, gz: -3, kind: 'tree' }, { gx: 4, gz: -3, kind: 'tree' },
+                { gx: -5, gz: 2, kind: 'tree' },  { gx: 5, gz: 2, kind: 'tree' },
+                { gx: -3, gz: -5, kind: 'stone' },{ gx: 3, gz: -5, kind: 'gold' },
+                { gx: -4, gz: 5, kind: 'gold' },  { gx: 4, gz: 5, kind: 'elixir' }
+            ];
+            starterRing.forEach(n => createResourceNode(n.gx, n.gz, n.kind));
+
+            for (let i = 0; i < 420; i++) {
+                const gx = Math.floor(hash2D(i * 1.7, i * 3.3) * (GRID_SIZE - 6)) - HALF_GRID + 3;
+                const gz = Math.floor(hash2D(i * 7.1, i * 2.9) * (GRID_SIZE - 6)) - HALF_GRID + 3;
+                if (Math.hypot(gx, gz) < 7) continue;
+
+                const { biome, isWater } = getBiomeAndHeight(gx, gz);
+                if (isWater) continue;
+
+                const roll = hash2D(gx, gz);
+                if (biome === 'plains') {
+                    createResourceNode(gx, gz, roll < 0.65 ? 'tree' : (roll < 0.88 ? 'stone' : 'gold'));
+                } else if (biome === 'desert') {
+                    createResourceNode(gx, gz, roll < 0.6 ? 'gold' : (roll < 0.88 ? 'stone' : 'elixir'));
+                } else if (biome === 'forest') {
+                    createResourceNode(gx, gz, roll < 0.72 ? 'darktree' : 'stone');
+                } else if (biome === 'badlands') {
+                    createResourceNode(gx, gz, roll < 0.58 ? 'elixir' : 'gold');
+                }
+            }
+
+            const outpostCoords = [
+                [-24, -22], [26, -20], [-26, 24], [24, 26],
+                [0, -36], [0, 38], [-40, 0], [40, 0],
+                [-44, -40], [44, -42], [-42, 44], [44, 44]
+            ];
+            outpostCoords.forEach(([ox, oz], idx) => {
+                if (!getBiomeAndHeight(ox, oz).isWater) {
+                    createGoblinOutpost(ox, oz, idx);
+                }
+            });
+
+            loadWorldFromStorage();
+            updateHUD();
+        }
+
+        // =====================================================================
+        // 8. HERO, FRIENDLY KNIGHTS, AND GOBLIN RAIDERS
+        // =====================================================================
+        const Hero = {
+            group: new THREE.Group(),
+            rightArmPivot: new THREE.Group(),
+            leftArmPivot: new THREE.Group(),
+            leftLeg: null,
+            rightLeg: null,
+            hp: 250,
+            maxHp: 250,
+            speed: 13.5,
+            swinging: false,
+            swingProgress: 0,
+            whirlwindCooldown: 0,
+            whirlwindActive: 0,
+            walkCycle: 0,
+            rageBoostTimer: 0,
+
+            init() {
+                const skinMat = new THREE.MeshStandardMaterial({ color: 0xfdba74, roughness: 0.6 });
+                const armorMat = new THREE.MeshStandardMaterial({ color: 0x0284c7, roughness: 0.4 });
+                const pantsMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.7 });
+
+                const legGeo = new THREE.BoxGeometry(0.28, 0.55, 0.28);
+                this.leftLeg = new THREE.Mesh(legGeo, pantsMat);
+                this.leftLeg.position.set(-0.17, 0.275, 0);
+                this.rightLeg = new THREE.Mesh(legGeo, pantsMat);
+                this.rightLeg.position.set(0.17, 0.275, 0);
+                this.group.add(this.leftLeg, this.rightLeg);
+
+                const torso = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.75, 0.4), armorMat);
+                torso.position.y = 0.92;
+                torso.castShadow = true;
+                this.group.add(torso);
+
+                const head = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.56, 0.56), skinMat);
+                head.position.y = 1.58;
+                head.castShadow = true;
+                this.group.add(head);
+
+                const helm = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.24, 0.62), Materials.goldOre);
+                helm.position.y = 1.82;
+                this.group.add(helm);
+
+                const armGeo = new THREE.BoxGeometry(0.25, 0.62, 0.25);
+                this.leftArmPivot.position.set(-0.48, 1.22, 0);
+                const lArm = new THREE.Mesh(armGeo, skinMat);
+                lArm.position.y = -0.22;
+                this.leftArmPivot.add(lArm);
+                this.group.add(this.leftArmPivot);
+
+                this.rightArmPivot.position.set(0.48, 1.22, 0);
+                const rArm = new THREE.Mesh(armGeo, skinMat);
+                rArm.position.y = -0.22;
+                this.rightArmPivot.add(rArm);
+
+                const blade = new THREE.Mesh(new THREE.BoxGeometry(0.14, 1.15, 0.24), Materials.goldOre);
+                blade.position.set(0, -0.55, 0.45);
+                blade.rotation.x = Math.PI / 2.6;
+                this.rightArmPivot.add(blade);
+                this.group.add(this.rightArmPivot);
+
+                this.group.position.set(0, 0, 7);
+                scene.add(this.group);
+            },
+
+            triggerSwing() {
+                this.swinging = true;
+                this.swingProgress = 0;
+                FirstPersonViewmodel.triggerActionSwing();
+                SoundFX.swing();
+            },
+
+            fireCrossbowBolt() {
+                FirstPersonViewmodel.triggerActionSwing();
+                SoundFX.bowShot();
+
+                // Shoot a high-speed 3D bolt along the camera's exact sight vector!
+                const dir = new THREE.Vector3();
+                camera.getWorldDirection(dir);
+
+                const startPos = new THREE.Vector3();
+                if (GameState.povMode === 'fps') {
+                    camera.getWorldPosition(startPos);
+                    startPos.addScaledVector(dir, 1.1);
+                } else {
+                    startPos.copy(Hero.group.position).add(new THREE.Vector3(0, 1.5, 0));
+                    const { x: tx, z: tz } = gridToWorld(GameState.hoveredTile.gx, GameState.hoveredTile.gz);
+                    dir.set(tx - startPos.x, 0, tz - startPos.z).normalize();
+                }
+
+                const isUpgraded = GameState.relics.arcaneBow;
+                const boltMesh = new THREE.Mesh(
+                    new THREE.BoxGeometry(0.24, 0.24, 0.85),
+                    new THREE.MeshBasicMaterial({ color: isUpgraded ? 0xd946ef : 0x38bdf8 })
+                );
+                boltMesh.position.copy(startPos);
+                boltMesh.lookAt(startPos.clone().add(dir));
+                scene.add(boltMesh);
+
+                const baseDmg = isUpgraded ? 68 : 34;
+                const rageMult = this.rageBoostTimer > 0 ? 1.8 : 1.0;
+
+                GameState.projectiles.push({
+                    mesh: boltMesh,
+                    velocity: dir.multiplyScalar(42),
+                    life: 1.6,
+                    isHeroBolt: true,
+                    damage: Math.round(baseDmg * rageMult),
+                    color: isUpgraded ? 0xd946ef : 0x38bdf8
+                });
+            },
+
+            triggerWhirlwind() {
+                if (this.whirlwindCooldown > 0) {
+                    SoundFX.error();
+                    setStatusToast(`Whirlwind Slash recharging (${this.whirlwindCooldown.toFixed(1)}s)`);
+                    return;
+                }
+                this.whirlwindCooldown = 4.5;
+                this.whirlwindActive = 0.45;
+                FirstPersonViewmodel.triggerActionSwing();
+                SoundFX.magic();
+
+                const fwdX = -Math.sin(CameraRig.yaw);
+                const fwdZ = -Math.cos(CameraRig.yaw);
+                this.group.position.x += fwdX * 4.2;
+                this.group.position.z += fwdZ * 4.2;
+
+                const hx = this.group.position.x;
+                const hz = this.group.position.z;
+                spawnBurstParticles(hx, 1.2, hz, 0x38bdf8, 18);
+                spawnFloatingText(hx, 2.6, hz, '🌪️ WHIRLWIND SLASH!', 'text-sky-300');
+
+                const dmg = GameState.relics.flameSword ? 110 : 65;
+                GameState.enemies.forEach(en => {
+                    if (Math.hypot(en.mesh.position.x - hx, en.mesh.position.z - hz) < 6.8) {
+                        damageEnemy(en, dmg);
+                    }
+                });
+
+                GameState.entities.forEach(ent => {
+                    if (ent.type === 'resource' || ent.type === 'chest' || ent.type === 'outpost_tower') {
+                        const { x, z } = gridToWorld(ent.gx, ent.gz);
+                        if (Math.hypot(x - hx, z - hz) < 5.2) {
+                            harvestOrDamageTileEntity(ent, 2);
+                        }
+                    }
+                });
+            }
+        };
+        Hero.init();
+
+        function spawnEnemyUnit(gx, gz, kind = 'goblin', guardOrigin = null) {
+            const { x, z } = gridToWorld(gx, gz);
+            const y = getTileHeight(gx, gz);
+            const isBoss = kind === 'boss';
+            const scale = isBoss ? 1.45 : 1.0;
+
+            const group = new THREE.Group();
+            const skinColor = isBoss ? 0x991b1b : 0x4d7c0f;
+            const skinMat = new THREE.MeshStandardMaterial({ color: skinColor, roughness: 0.7 });
+            const armorMat = new THREE.MeshStandardMaterial({ color: isBoss ? 0xfbbf24 : 0x78350f, roughness: 0.6 });
+
+            const body = new THREE.Mesh(new THREE.BoxGeometry(0.6 * scale, 0.75 * scale, 0.4 * scale), armorMat);
+            body.position.y = 0.6 * scale;
+            body.castShadow = true;
+            group.add(body);
+
+            const head = new THREE.Mesh(new THREE.BoxGeometry(0.55 * scale, 0.55 * scale, 0.55 * scale), skinMat);
+            head.position.y = 1.25 * scale;
+            head.castShadow = true;
+            group.add(head);
+
+            const club = new THREE.Mesh(new THREE.BoxGeometry(0.2 * scale, 0.8 * scale, 0.2 * scale), Materials.woodBark);
+            club.position.set(0.42 * scale, 0.75 * scale, 0.3 * scale);
+            club.rotation.x = Math.PI / 3;
+            group.add(club);
+
+            group.position.set(x, y, z);
+            scene.add(group);
+
+            const enemy = {
+                kind,
+                name: isBoss ? 'Goblin Warlord Boss' : 'Goblin Raider',
+                hp: isBoss ? 180 : 65,
+                maxHp: isBoss ? 180 : 65,
+                damage: isBoss ? 22 : 10,
+                speed: isBoss ? 4.8 : 6.2,
+                attackCooldown: 0,
+                guardOrigin,
+                mesh: group
+            };
+            GameState.enemies.push(enemy);
+            return enemy;
+        }
+
+        function maintainKnightSquad() {
+            const maxKnights = GameState.barracksList.reduce((sum, b) => sum + b.level * 2, 0);
+            while (GameState.knights.length < maxKnights) {
+                const spawnBarracks = GameState.barracksList[GameState.knights.length % GameState.barracksList.length];
+                const { x, z } = spawnBarracks ? gridToWorld(spawnBarracks.gx, spawnBarracks.gz) : { x: 2, z: 2 };
+
+                const group = new THREE.Group();
+                const armorMat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.4, roughness: 0.3 });
+                const body = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.8, 0.4), armorMat);
+                body.position.y = 0.65;
+                body.castShadow = true;
+                group.add(body);
+
+                const head = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.5), Materials.cobble);
+                head.position.y = 1.3;
+                group.add(head);
+
+                const plume = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.25, 0.55), Materials.goldOre);
+                plume.position.y = 1.62;
+                group.add(plume);
+
+                group.position.set(x + (Math.random() - 0.5) * 2, 0, z + (Math.random() - 0.5) * 2);
+                scene.add(group);
+
+                GameState.knights.push({
+                    hp: 150, maxHp: 150,
+                    damage: 20,
+                    speed: 8.8,
+                    attackCooldown: 0,
+                    mesh: group,
+                    offsetAngle: Math.random() * Math.PI * 2
+                });
+            }
+            updateHUD();
+        }
+
+        function damageEnemy(enemy, amount) {
+            enemy.hp -= amount;
+            const pos = enemy.mesh.position;
+            spawnBurstParticles(pos.x, pos.y + 1.0, pos.z, 0xef4444, 5);
+            spawnFloatingText(pos.x, pos.y + 2.0, pos.z, `-${amount}`, 'text-rose-400');
+
+            if (enemy.hp <= 0) {
+                const idx = GameState.enemies.indexOf(enemy);
+                if (idx !== -1) GameState.enemies.splice(idx, 1);
+                scene.remove(enemy.mesh);
+
+                const goldDrop = enemy.kind === 'boss' ? 80 : 22;
+                const elixirDrop = enemy.kind === 'boss' ? 55 : 15;
+                addResources({ gold: goldDrop, elixir: elixirDrop, gems: enemy.kind === 'boss' ? 1 : 0 });
+                SoundFX.harvest();
+                spawnBurstParticles(pos.x, pos.y + 1.0, pos.z, 0xfbbf24, 12);
+                spawnFloatingText(pos.x, pos.y + 2.3, pos.z, `+${goldDrop}🪙 +${elixirDrop}🧪`, 'text-yellow-300');
+            }
+        }
+
+        function triggerRaidWave() {
+            SoundFX.horn();
+            const count = 3 + GameState.waveNumber * 2;
+            const angle = Math.random() * Math.PI * 2;
+            const spawnDist = 26;
+            const baseGx = Math.round(Math.cos(angle) * spawnDist);
+            const baseGz = Math.round(Math.sin(angle) * spawnDist);
+
+            for (let i = 0; i < count; i++) {
+                const gx = baseGx + Math.floor((Math.random() - 0.5) * 6);
+                const gz = baseGz + Math.floor((Math.random() - 0.5) * 6);
+                spawnEnemyUnit(gx, gz, i === 0 && GameState.waveNumber >= 2 ? 'boss' : 'goblin', null);
+            }
+
+            setStatusToast(`📯 RAID WAVE #${GameState.waveNumber}: ${count} Goblin Raiders are attacking! Cast Spells [Z/X/C] or fight!`);
+            GameState.waveNumber++;
+            GameState.raidCountdown = 50;
+        }
+
+        // =====================================================================
+        // 9. STEP 3 CLASH OF CLANS SPELL FACTORY (Heal, Rage, Lightning)
+        // =====================================================================
+        function castClashSpell(spellType) {
+            const { gx, gz } = GameState.hoveredTile;
+            const { x, z } = gridToWorld(gx, gz);
+            const y = getTileHeight(gx, gz);
+
+            if (spellType === 'heal') {
+                if (!canAfford({ elixir: 60 })) {
+                    SoundFX.error();
+                    setStatusToast('Need 60 Elixir 🧪 to cast Heal Ring Spell!');
+                    return;
+                }
+                spendResources({ elixir: 60 });
+                SoundFX.spellHeal();
+
+                const ringGeo = new THREE.RingGeometry(0.4, 5.2, 32);
+                ringGeo.rotateX(-Math.PI / 2);
+                const ringMat = new THREE.MeshBasicMaterial({
+                    color: 0xfbbf24, side: THREE.DoubleSide, transparent: true, opacity: 0.55
+                });
+                const ringMesh = new THREE.Mesh(ringGeo, ringMat);
+                ringMesh.position.set(x, y + 0.15, z);
+                scene.add(ringMesh);
+
+                GameState.spellZones.push({ type: 'heal', x, z, radius: 5.2, duration: 8.0, tick: 0, mesh: ringMesh });
+                spawnFloatingText(x, y + 2.5, z, '💛 HEAL SPELL!', 'text-amber-300');
+            } else if (spellType === 'rage') {
+                if (!canAfford({ elixir: 75 })) {
+                    SoundFX.error();
+                    setStatusToast('Need 75 Elixir 🧪 to cast Rage Fury Spell!');
+                    return;
+                }
+                spendResources({ elixir: 75 });
+                SoundFX.spellRage();
+
+                const ringGeo = new THREE.RingGeometry(0.4, 5.8, 32);
+                ringGeo.rotateX(-Math.PI / 2);
+                const ringMat = new THREE.MeshBasicMaterial({
+                    color: 0xd946ef, side: THREE.DoubleSide, transparent: true, opacity: 0.55
+                });
+                const ringMesh = new THREE.Mesh(ringGeo, ringMat);
+                ringMesh.position.set(x, y + 0.16, z);
+                scene.add(ringMesh);
+
+                GameState.spellZones.push({ type: 'rage', x, z, radius: 5.8, duration: 8.0, tick: 0, mesh: ringMesh });
+                spawnFloatingText(x, y + 2.5, z, '🔥 RAGE SPELL (+80% DMG)!', 'text-fuchsia-300');
+            } else if (spellType === 'lightning') {
+                if (!canAfford({ elixir: 90 })) {
+                    SoundFX.error();
+                    setStatusToast('Need 90 Elixir 🧪 to call Lightning Strike!');
+                    return;
+                }
+                spendResources({ elixir: 90 });
+                SoundFX.spellLightning();
+
+                // 3D Sky Lightning Bolt Cylinder
+                const boltGeo = new THREE.CylinderGeometry(0.35, 0.75, 36, 8);
+                const boltMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8 });
+                const boltMesh = new THREE.Mesh(boltGeo, boltMat);
+                boltMesh.position.set(x, y + 18, z);
+                scene.add(boltMesh);
+                setTimeout(() => scene.remove(boltMesh), 260);
+
+                spawnBurstParticles(x, y + 1.5, z, 0x38bdf8, 24);
+                spawnFloatingText(x, y + 3.0, z, '⚡ LIGHTNING STRIKE!', 'text-sky-300');
+
+                // Heavy AoE damage to enemies and Outpost towers
+                for (let i = GameState.enemies.length - 1; i >= 0; i--) {
+                    const en = GameState.enemies[i];
+                    if (Math.hypot(en.mesh.position.x - x, en.mesh.position.z - z) < 6.5) {
+                        damageEnemy(en, 125);
+                    }
+                }
+                GameState.entities.forEach(ent => {
+                    if (ent.type === 'outpost_tower' || ent.type === 'chest') {
+                        const pos = gridToWorld(ent.gx, ent.gz);
+                        if (Math.hypot(pos.x - x, pos.z - z) < 5.5) {
+                            harvestOrDamageTileEntity(ent, 4);
+                        }
+                    }
+                });
+            }
+        }
+
+        document.querySelectorAll('.spell-btn').forEach(btn => {
+            btn.addEventListener('click', () => castClashSpell(btn.dataset.spell));
+        });
+
+        // =====================================================================
+        // 10. STEP 3 HERO CRAFTING FORGE & LOCALSTORAGE SAVE/LOAD
+        // =====================================================================
+        function updateForgeModalUI() {
+            const r = GameState.relics;
+            document.getElementById('badge-forge-sword').textContent = r.flameSword ? 'Equipped ✅' : 'Locked';
+            document.getElementById('badge-forge-bow').textContent = r.arcaneBow ? 'Plasma Lv.2 ✅' : 'Owned (Lv.1)';
+            document.getElementById('badge-forge-armor').textContent = r.titanArmor ? 'Equipped ✅' : 'Locked';
+            document.getElementById('badge-forge-hammer').textContent = r.masterHammer ? 'Equipped ✅' : 'Locked';
+        }
+
+        document.getElementById('btn-open-forge').addEventListener('click', () => {
+            updateForgeModalUI();
+            document.getElementById('forge-modal').classList.remove('hidden');
+        });
+        document.getElementById('btn-close-forge').addEventListener('click', () => {
+            document.getElementById('forge-modal').classList.add('hidden');
+        });
+
+        document.querySelectorAll('.craft-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const item = btn.dataset.craft;
+                if (GameState.relics[item]) {
+                    setStatusToast('Relic already crafted and equipped!');
+                    return;
+                }
+                let cost = {};
+                if (item === 'flameSword') cost = { gold: 150, stone: 80, gems: 2 };
+                if (item === 'arcaneBow') cost = { wood: 120, elixir: 120, gems: 2 };
+                if (item === 'titanArmor') cost = { stone: 140, gold: 140, gems: 2 };
+                if (item === 'masterHammer') cost = { wood: 120, stone: 120, gems: 2 };
+
+                if (!canAfford(cost) || GameState.gems < (cost.gems || 0)) {
+                    SoundFX.error();
+                    setStatusToast('Not enough resources or Gems 💎! Raid Goblin Outposts for Gems.');
+                    return;
+                }
+
+                spendResources(cost);
+                GameState.gems -= (cost.gems || 0);
+                GameState.relics[item] = true;
+
+                if (item === 'titanArmor') {
+                    Hero.maxHp = 500;
+                    Hero.hp = 500;
+                }
+                FirstPersonViewmodel.updateToolAppearance();
+                SoundFX.chestLoot();
+                updateForgeModalUI();
+                updateHUD();
+                saveWorldToStorage();
+                setStatusToast(`⚒️ Crafted ${item}! Your First-Person Hero gear has been upgraded!`);
+            });
+        });
+
+        function saveWorldToStorage() {
+            try {
+                const buildings = [];
+                GameState.entities.forEach(ent => {
+                    if (ent.isPlayerStructure && ent.type !== 'townhall') {
+                        buildings.push({ type: ent.type, gx: ent.gx, gz: ent.gz, level: ent.level });
+                    }
+                });
+                const th = GameState.entities.get(tileKey(0, 0));
+                const payload = {
+                    wood: GameState.wood,
+                    stone: GameState.stone,
+                    gold: GameState.gold,
+                    elixir: GameState.elixir,
+                    gems: GameState.gems,
+                    thLevel: th ? th.level : 1,
+                    relics: GameState.relics,
+                    buildings
+                };
+                localStorage.setItem('voxel_clash_step3_save', JSON.stringify(payload));
+                setStatusToast('💾 World & Base Layout saved to browser storage!');
+            } catch (e) {}
+        }
+
+        function loadWorldFromStorage() {
+            try {
+                const raw = localStorage.getItem('voxel_clash_step3_save');
+                if (!raw) return;
+                const data = JSON.parse(raw);
+                GameState.wood = data.wood ?? 240;
+                GameState.stone = data.stone ?? 200;
+                GameState.gold = data.gold ?? 200;
+                GameState.elixir = data.elixir ?? 180;
+                GameState.gems = data.gems ?? 8;
+                if (data.relics) Object.assign(GameState.relics, data.relics);
+                if (GameState.relics.titanArmor) {
+                    Hero.maxHp = 500;
+                    Hero.hp = 500;
+                }
+                const th = GameState.entities.get(tileKey(0, 0));
+                if (th && data.thLevel > 1) {
+                    th.level = data.thLevel;
+                    th.maxHp = Math.round(1200 * Math.pow(1.3, th.level - 1));
+                    th.hp = th.maxHp;
+                    th.mesh.scale.setScalar(1 + (th.level - 1) * 0.08);
+                }
+                if (Array.isArray(data.buildings)) {
+                    data.buildings.forEach(b => {
+                        const existing = GameState.entities.get(tileKey(b.gx, b.gz));
+                        if (existing && !existing.isPlayerStructure) {
+                            entitiesGroup.remove(existing.mesh);
+                            GameState.entities.delete(tileKey(b.gx, b.gz));
+                        }
+                        if (!GameState.entities.has(tileKey(b.gx, b.gz))) {
+                            createPlayerStructure(b.gx, b.gz, b.type, b.level || 1);
+                        }
+                    });
+                }
+                recalculateStorageCapacity();
+                FirstPersonViewmodel.updateToolAppearance();
+            } catch (e) {}
+        }
+
+        document.getElementById('btn-save-world').addEventListener('click', saveWorldToStorage);
+        document.getElementById('btn-reset-save').addEventListener('click', () => {
+            localStorage.removeItem('voxel_clash_step3_save');
+            window.location.reload();
+        });
+
+        // =====================================================================
+        // 11. HARVESTING, BUILDING & UPGRADE INSPECTOR
+        // =====================================================================
+        function addResources(delta) {
+            GameState.wood = Math.min(GameState.maxStorage, GameState.wood + (delta.wood || 0));
+            GameState.stone = Math.min(GameState.maxStorage, GameState.stone + (delta.stone || 0));
+            GameState.gold = Math.min(GameState.maxStorage, GameState.gold + (delta.gold || 0));
+            GameState.elixir = Math.min(GameState.maxStorage, GameState.elixir + (delta.elixir || 0));
+            if (delta.gems) GameState.gems += delta.gems;
+            updateHUD();
+        }
+
+        function canAfford(cost) {
+            return (
+                GameState.wood >= (cost.wood || 0) &&
+                GameState.stone >= (cost.stone || 0) &&
+                GameState.gold >= (cost.gold || 0) &&
+                GameState.elixir >= (cost.elixir || 0)
+            );
+        }
+
+        function spendResources(cost) {
+            GameState.wood -= (cost.wood || 0);
+            GameState.stone -= (cost.stone || 0);
+            GameState.gold -= (cost.gold || 0);
+            GameState.elixir -= (cost.elixir || 0);
+            updateHUD();
+        }
+
+        function harvestOrDamageTileEntity(entity, dmg = 1) {
+            if (!entity) return;
+            const { x, z } = gridToWorld(entity.gx, entity.gz);
+            const y = getTileHeight(entity.gx, entity.gz);
+
+            entity.hp -= dmg;
+            entity.mesh.scale.set(1.18, 0.84, 1.18);
+            spawnBurstParticles(x, y + 1.0, z, entity.hitColor || 0xfbbf24, 6);
+
+            if (entity.hp > 0) {
+                SoundFX.hit();
+                spawnFloatingText(x, y + 2.2, z, `⛏️ ${entity.hp}/${entity.maxHp}`, 'text-slate-200');
+            } else {
+                if (entity.type === 'chest' || entity.type === 'outpost_tower') {
+                    SoundFX.chestLoot();
+                } else {
+                    SoundFX.harvest();
+                }
+
+                const mult = (GameState.relics.masterHammer && entity.type === 'resource') ? 2 : 1;
+                const r = {
+                    wood: (entity.reward.wood || 0) * mult,
+                    stone: (entity.reward.stone || 0) * mult,
+                    gold: (entity.reward.gold || 0) * mult,
+                    elixir: (entity.reward.elixir || 0) * mult,
+                    gems: entity.reward.gems || 0
+                };
+                addResources(r);
+
+                const tags = [];
+                if (r.wood) tags.push(`+${r.wood}🪵`);
+                if (r.stone) tags.push(`+${r.stone}🪨`);
+                if (r.gold) tags.push(`+${r.gold}🪙`);
+                if (r.elixir) tags.push(`+${r.elixir}🧪`);
+                if (r.gems) tags.push(`+${r.gems}💎`);
+
+                spawnFloatingText(x, y + 2.5, z, tags.join(' '), 'text-amber-300');
+                spawnBurstParticles(x, y + 1.2, z, entity.hitColor || 0xfbbf24, 15);
+
+                if (entity.type === 'outpost_tower') {
+                    GameState.outposts = GameState.outposts.filter(o => o.core !== entity);
+                }
+
+                entitiesGroup.remove(entity.mesh);
+                GameState.entities.delete(tileKey(entity.gx, entity.gz));
+                updateHUD();
+            }
+        }
+
+        function handlePrimaryAction() {
+            const { gx, gz } = GameState.hoveredTile;
+            const key = tileKey(gx, gz);
+            const existing = GameState.entities.get(key);
+            const { x, z } = gridToWorld(gx, gz);
+            const y = getTileHeight(gx, gz);
+            const slot = GameState.selectedSlot;
+
+            if (slot === 'crossbow') {
+                Hero.fireCrossbowBolt();
+                return;
+            }
+
+            if (slot === 'action') {
+                Hero.triggerSwing();
+                const meleeDmg = (GameState.relics.flameSword ? 75 : 35) * (Hero.rageBoostTimer > 0 ? 1.8 : 1.0);
+
+                // Hit enemies near target tile or in front of Hero
+                let hitAnyEnemy = false;
+                for (let i = GameState.enemies.length - 1; i >= 0; i--) {
+                    const en = GameState.enemies[i];
+                    if (Math.hypot(en.mesh.position.x - x, en.mesh.position.z - z) < 3.4) {
+                        damageEnemy(en, Math.round(meleeDmg));
+                        hitAnyEnemy = true;
+                        if (!GameState.relics.flameSword) break; // Flame sword cleaves all!
+                    }
+                }
+                if (hitAnyEnemy) return;
+
+                if (existing) {
+                    if (existing.isPlayerStructure) {
+                        openStructureInspector(existing);
+                        return;
+                    }
+                    if (existing.type === 'resource' || existing.type === 'chest' || existing.type === 'outpost_tower') {
+                        harvestOrDamageTileEntity(existing, GameState.relics.flameSword ? 2 : 1);
+                        return;
+                    }
+                }
+                return;
+            }
+
+            // Building a Clash Structure (Slots 3 - 0)
+            const def = STRUCTURE_DEFS[slot];
+            if (!def) return;
+
+            if (getBiomeAndHeight(gx, gz).isWater) {
+                SoundFX.error();
+                spawnFloatingText(x, y + 1.5, z, 'Cannot build on water!', 'text-rose-400');
+                return;
+            }
+
+            if (existing) {
+                if (existing.isPlayerStructure) {
+                    openStructureInspector(existing);
+                } else {
+                    SoundFX.error();
+                    spawnFloatingText(x, y + 1.8, z, 'Tile Occupied!', 'text-rose-400');
+                }
+                return;
+            }
+
+            if (!canAfford(def.cost)) {
+                SoundFX.error();
+                spawnFloatingText(x, y + 1.8, z, 'Insufficient Resources!', 'text-rose-400');
+                return;
+            }
+
+            spendResources(def.cost);
+            FirstPersonViewmodel.triggerActionSwing();
+            const built = createPlayerStructure(gx, gz, slot, 1);
+            SoundFX.build();
+            spawnBurstParticles(x, y + 1.0, z, 0x38bdf8, 10);
+            spawnFloatingText(x, y + 2.2, z, `Built ${def.name}!`, 'text-emerald-300');
+            openStructureInspector(built);
+            saveWorldToStorage();
+        }
+
+        function openStructureInspector(entity) {
+            GameState.inspectedEntity = entity;
+            const panel = document.getElementById('inspector-panel');
+            panel.classList.remove('hidden');
+
+            document.getElementById('insp-icon').textContent = entity.icon || '🏰';
+            document.getElementById('insp-title').textContent = entity.name;
+            document.getElementById('insp-level').textContent = `Level ${entity.level}`;
+            document.getElementById('insp-hp').textContent = `${Math.ceil(entity.hp)} / ${entity.maxHp}`;
+            document.getElementById('insp-hp-bar').style.width = `${Math.min(100, (entity.hp / entity.maxHp) * 100)}%`;
+
+            const def = STRUCTURE_DEFS[entity.type];
+            document.getElementById('insp-stats').textContent = def
+                ? def.desc
+                : 'Central stronghold of your village. Upgrading unlocks +400 storage capacity and higher durability.';
+
+            const upgBtn = document.getElementById('btn-upgrade-struct');
+            if (entity.level >= 5) {
+                upgBtn.disabled = true;
+                upgBtn.innerHTML = `<span>🌟 MAX LEVEL (Lv.5)</span><span>MAX</span>`;
+            } else {
+                upgBtn.disabled = false;
+                const mult = entity.level;
+                const goldCost = 80 * mult;
+                const stoneCost = 50 * mult;
+                upgBtn.innerHTML = `<span>⬆️ Upgrade to Lv.${entity.level + 1}</span><span class="font-mono text-[11px] bg-slate-950/25 px-1.5 py-0.5 rounded">${goldCost}🪙 ${stoneCost}🪨</span>`;
+            }
+
+            const stanceBtn = document.getElementById('btn-barracks-stance');
+            if (entity.type === 'barracks') {
+                stanceBtn.classList.remove('hidden');
+                document.getElementById('stance-label').textContent =
+                    GameState.knightStance === 'follow' ? 'Follow Hero 🦸' : 'Guard Town Hall 🏰';
+            } else {
+                stanceBtn.classList.add('hidden');
+            }
+        }
+
+        document.getElementById('btn-close-inspector').addEventListener('click', () => {
+            document.getElementById('inspector-panel').classList.add('hidden');
+            GameState.inspectedEntity = null;
+        });
+
+        document.getElementById('th-status-chip').addEventListener('click', () => {
+            const th = GameState.entities.get(tileKey(0, 0));
+            if (th) openStructureInspector(th);
+        });
+
+        document.getElementById('btn-upgrade-struct').addEventListener('click', () => {
+            const ent = GameState.inspectedEntity;
+            if (!ent || ent.level >= 5) return;
+            const cost = { gold: 80 * ent.level, stone: 50 * ent.level };
+            if (!canAfford(cost)) {
+                SoundFX.error();
+                setStatusToast(`Need ${cost.gold} Gold & ${cost.stone} Stone to upgrade ${ent.name}!`);
+                return;
+            }
+            spendResources(cost);
+            ent.level++;
+            ent.maxHp = Math.round(ent.maxHp * 1.35);
+            ent.hp = ent.maxHp;
+            if (ent.damage) ent.damage = Math.round(ent.damage * 1.3);
+            ent.targetScale = 1 + (ent.level - 1) * 0.08;
+            ent.mesh.scale.setScalar(ent.targetScale);
+
+            const { x, z } = gridToWorld(ent.gx, ent.gz);
+            SoundFX.upgrade();
+            spawnBurstParticles(x, 1.8, z, 0xfbbf24, 16);
+            spawnFloatingText(x, 2.8, z, `⬆️ ${ent.name} Lv.${ent.level}!`, 'text-amber-300');
+
+            recalculateStorageCapacity();
+            maintainKnightSquad();
+            openStructureInspector(ent);
+            updateHUD();
+            saveWorldToStorage();
+        });
+
+        document.getElementById('btn-barracks-stance').addEventListener('click', () => {
+            GameState.knightStance = GameState.knightStance === 'follow' ? 'guard' : 'follow';
+            if (GameState.inspectedEntity) openStructureInspector(GameState.inspectedEntity);
+        });
+
+        document.getElementById('btn-repair-struct').addEventListener('click', () => {
+            const ent = GameState.inspectedEntity;
+            if (!ent || ent.hp >= ent.maxHp) return;
+            if (!canAfford({ wood: 25 })) { SoundFX.error(); return; }
+            spendResources({ wood: 25 });
+            ent.hp = ent.maxHp;
+            SoundFX.build();
+            openStructureInspector(ent);
+            updateHUD();
+        });
+
+        document.getElementById('btn-demolish-struct').addEventListener('click', () => {
+            const ent = GameState.inspectedEntity;
+            if (!ent || ent.type === 'townhall') { SoundFX.error(); return; }
+            addResources({
+                wood: Math.floor((ent.cost?.wood || 0) * 0.5),
+                stone: Math.floor((ent.cost?.stone || 0) * 0.5),
+                gold: Math.floor((ent.cost?.gold || 0) * 0.5),
+                elixir: Math.floor((ent.cost?.elixir || 0) * 0.5)
+            });
+
+            GameState.collectors = GameState.collectors.filter(c => c !== ent);
+            GameState.turrets = GameState.turrets.filter(t => t !== ent);
+            GameState.barracksList = GameState.barracksList.filter(b => b !== ent);
+
+            entitiesGroup.remove(ent.mesh);
+            GameState.entities.delete(tileKey(ent.gx, ent.gz));
+            document.getElementById('inspector-panel').classList.add('hidden');
+            GameState.inspectedEntity = null;
+            recalculateStorageCapacity();
+            SoundFX.hit();
+            saveWorldToStorage();
+        });
+
+        // =====================================================================
+        // 12. FIRST-PERSON POV + CLASH OF CLANS ISOMETRIC CAMERA CONTROLLER
+        // =====================================================================
+        const CameraRig = {
+            yaw: 0,                  // Looking North toward Town Hall (0,0) from (0,7)
+            pitch: -0.12,            // Slight downward eye tilt in First-Person
+            isoPitch: 0.72,          // 45-degree Clash of Clans Isometric angle
+            distance: 38,            // Isometric zoom distance
+            target: new THREE.Vector3(0, 0, 4),
+            isOrbitDragging: false,
+            isPanDragging: false,
+            prevMouse: { x: 0, y: 0 },
+
+            setPOV(mode) {
+                GameState.povMode = mode;
+                document.querySelectorAll('.pov-btn').forEach(btn => {
+                    const active = btn.dataset.pov === mode;
+                    btn.className = active
+                        ? 'pov-btn px-2.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1 bg-amber-500 text-slate-950 shadow'
+                        : 'pov-btn px-2.5 py-1.5 rounded-xl text-xs font-semibold text-slate-300 hover:text-white hover:bg-slate-800/80 transition flex items-center gap-1';
+                });
+
+                const crosshair = document.getElementById('fps-crosshair');
+                if (mode === 'fps') {
+                    crosshair.classList.remove('hidden');
+                    Hero.group.visible = false; // Hide 3rd-person body while in First-Person eye view
+                    FirstPersonViewmodel.root.visible = true;
+                    setStatusToast('👁️ First-Person Sight POV: Move mouse to turn sight & dynamically render tiles in your FOV cone! Press [V] for Clash View.');
+                } else {
+                    crosshair.classList.add('hidden');
+                    Hero.group.visible = true;
+                    FirstPersonViewmodel.root.visible = false;
+                    if (document.pointerLockElement === canvas) {
+                        document.exitPointerLock?.();
+                    }
+                    if (mode === 'clash') {
+                        this.distance = 38;
+                        this.isoPitch = 0.74;
+                        setStatusToast('🏰 Clash of Clans Isometric View: Right-Click Drag to orbit • Scroll to zoom • Left-Click to build, command & upgrade!');
+                    } else if (mode === 'freepan') {
+                        this.distance = 55;
+                        this.isoPitch = 0.88;
+                        setStatusToast('🗺️ Strategic Scout Cam: Drag map or click Minimap to inspect distant Goblin Outposts • Press [Space] to return to Hero.');
+                    }
+                }
+            },
+
+            update(dt) {
+                if (GameState.povMode === 'fps') {
+                    // FIRST-PERSON POV: Camera at Hero's eye level (y + 2.15)
+                    const eyeX = Hero.group.position.x;
+                    const eyeY = Hero.group.position.y + 2.15;
+                    const eyeZ = Hero.group.position.z;
+
+                    camera.position.set(eyeX, eyeY, eyeZ);
+
+                    const lookDirX = -Math.sin(this.yaw) * Math.cos(this.pitch);
+                    const lookDirY = Math.sin(this.pitch);
+                    const lookDirZ = -Math.cos(this.yaw) * Math.cos(this.pitch);
+
+                    camera.lookAt(eyeX + lookDirX * 20, eyeY + lookDirY * 20, eyeZ + lookDirZ * 20);
+                    Hero.group.rotation.y = this.yaw + Math.PI;
+
+                    // Target tile is where the First-Person Crosshair ray intersects the ground
+                    raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+                    if (raycaster.ray.intersectPlane(raycastGroundPlane, intersectPoint)) {
+                        const dist = Math.hypot(intersectPoint.x - eyeX, intersectPoint.z - eyeZ);
+                        if (dist <= 16) {
+                            GameState.hoveredTile = worldToGrid(intersectPoint.x, intersectPoint.z);
+                        } else {
+                            // Clamp build/interact reach to 7.5m in front of Hero
+                            GameState.hoveredTile = worldToGrid(
+                                eyeX - Math.sin(this.yaw) * 6.5,
+                                eyeZ - Math.cos(this.yaw) * 6.5
+                            );
+                        }
+                    } else {
+                        GameState.hoveredTile = worldToGrid(
+                            eyeX - Math.sin(this.yaw) * 6.5,
+                            eyeZ - Math.cos(this.yaw) * 6.5
+                        );
+                    }
+                    refreshCursorVisual();
+
+                    sunLight.target.position.set(eyeX, 0, eyeZ);
+                    sunLight.target.updateMatrixWorld();
+                    sunLight.position.set(eyeX + 40, 78, eyeZ + 30);
+                } else {
+                    // CLASH OF CLANS ISOMETRIC / SCOUT CAM
+                    if (GameState.povMode === 'clash') {
+                        this.target.x += (Hero.group.position.x - this.target.x) * Math.min(1, dt * 8);
+                        this.target.z += (Hero.group.position.z - this.target.z) * Math.min(1, dt * 8);
+                    }
+
+                    const camX = this.target.x + Math.sin(this.yaw) * Math.cos(this.isoPitch) * this.distance;
+                    const camY = Math.sin(this.isoPitch) * this.distance;
+                    const camZ = this.target.z + Math.cos(this.yaw) * Math.cos(this.isoPitch) * this.distance;
+
+                    camera.position.set(camX, camY, camZ);
+                    camera.lookAt(this.target.x, 0.8, this.target.z);
+
+                    sunLight.target.position.set(this.target.x, 0, this.target.z);
+                    sunLight.target.updateMatrixWorld();
+                    sunLight.position.set(this.target.x + 40, 78, this.target.z + 30);
+                }
+            }
+        };
+
+        document.querySelectorAll('.pov-btn').forEach(btn => {
+            btn.addEventListener('click', () => CameraRig.setPOV(btn.dataset.pov));
+        });
+
+        // Sight Distance Slider & Auto Hover-Sight Toggle
+        const distSlider = document.getElementById('slider-render-dist');
+        distSlider.addEventListener('input', (e) => {
+            GameState.renderDistance = Number(e.target.value);
+            document.getElementById('render-dist-label').textContent = `${GameState.renderDistance}m`;
+        });
+
+        const sightModeBtn = document.getElementById('btn-sight-mode');
+        sightModeBtn.addEventListener('click', () => {
+            GameState.autoHoverSight = !GameState.autoHoverSight;
+            sightModeBtn.textContent = GameState.autoHoverSight
+                ? '👁️ Auto Hover-Sight: ON'
+                : '🖱️ Drag Sight Only';
+        });
+
+        const raycaster = new THREE.Raycaster();
+        const mouseNDC = new THREE.Vector2();
+        const intersectPoint = new THREE.Vector3();
+
+        function updateHoveredTileFromMouse(clientX, clientY) {
+            if (GameState.povMode === 'fps') return; // Handled by center crosshair ray in FPS
+            mouseNDC.x = (clientX / window.innerWidth) * 2 - 1;
+            mouseNDC.y = -(clientY / window.innerHeight) * 2 + 1;
+            raycaster.setFromCamera(mouseNDC, camera);
+            if (raycaster.ray.intersectPlane(raycastGroundPlane, intersectPoint)) {
+                GameState.hoveredTile = worldToGrid(intersectPoint.x, intersectPoint.z);
+                refreshCursorVisual();
+            }
+        }
+
+        function refreshCursorVisual() {
+            const { gx, gz } = GameState.hoveredTile;
+            const { x, z } = gridToWorld(gx, gz);
+            const y = getTileHeight(gx, gz);
+            cursorGroup.position.set(x, y, z);
+
+            const isBuildingSlot = (GameState.selectedSlot !== 'action' && GameState.selectedSlot !== 'crossbow');
+            holoBox.visible = isBuildingSlot;
+
+            const biomeNames = {
+                plains: 'Emerald Plains',
+                desert: 'Golden Dunes',
+                forest: 'Dark Forest',
+                badlands: 'Crystal Badlands',
+                water: 'River Waterway'
+            };
+            const bName = biomeNames[getTileBiome(gx, gz)] || 'Plains';
+            const ent = GameState.entities.get(tileKey(gx, gz));
+            document.getElementById('telemetry-label').textContent =
+                `${bName} (${gx}, ${gz}) ${ent ? '• ' + ent.name : ''}`;
+        }
+
+        // Mouse & Pointer Event Listeners
+        let pointerDownPos = { x: 0, y: 0 };
+        let lastHoverPos = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+
+        canvas.addEventListener('pointerdown', (e) => {
+            pointerDownPos = { x: e.clientX, y: e.clientY };
+            lastHoverPos = { x: e.clientX, y: e.clientY };
+
+            if (GameState.povMode === 'fps') {
+                if (e.button === 0) {
+                    handlePrimaryAction();
+                } else if (e.button === 2) {
+                    CameraRig.isOrbitDragging = true;
+                }
+                return;
+            }
+
+            if (e.button === 2 || e.button === 1 || e.shiftKey) {
+                CameraRig.isOrbitDragging = true;
+                CameraRig.prevMouse = { x: e.clientX, y: e.clientY };
+            } else if (e.button === 0 && GameState.povMode === 'freepan') {
+                CameraRig.isPanDragging = true;
+                CameraRig.prevMouse = { x: e.clientX, y: e.clientY };
+            }
+        });
+
+        window.addEventListener('pointermove', (e) => {
+            if (GameState.povMode === 'fps') {
+                if (document.pointerLockElement === canvas) {
+                    CameraRig.yaw -= e.movementX * 0.0042;
+                    CameraRig.pitch = Math.max(-0.85, Math.min(0.65, CameraRig.pitch - e.movementY * 0.0035));
+                } else if (CameraRig.isOrbitDragging || (GameState.autoHoverSight && e.target === canvas)) {
+                    const dx = e.clientX - lastHoverPos.x;
+                    const dy = e.clientY - lastHoverPos.y;
+                    CameraRig.yaw -= dx * 0.0055;
+                    CameraRig.pitch = Math.max(-0.85, Math.min(0.65, CameraRig.pitch - dy * 0.0042));
+                }
+                lastHoverPos = { x: e.clientX, y: e.clientY };
+                return;
+            }
+
+            if (CameraRig.isOrbitDragging) {
+                const dx = e.clientX - CameraRig.prevMouse.x;
+                const dy = e.clientY - CameraRig.prevMouse.y;
+                CameraRig.yaw -= dx * 0.007;
+                CameraRig.isoPitch = Math.max(0.32, Math.min(1.35, CameraRig.isoPitch + dy * 0.006));
+                CameraRig.prevMouse = { x: e.clientX, y: e.clientY };
+            } else if (CameraRig.isPanDragging) {
+                const dx = e.clientX - CameraRig.prevMouse.x;
+                const dy = e.clientY - CameraRig.prevMouse.y;
+                const panScale = CameraRig.distance * 0.0022;
+                const rightX = Math.cos(CameraRig.yaw);
+                const rightZ = -Math.sin(CameraRig.yaw);
+                const fwdX = Math.sin(CameraRig.yaw);
+                const fwdZ = Math.cos(CameraRig.yaw);
+
+                CameraRig.target.x -= (dx * rightX - dy * fwdX) * panScale;
+                CameraRig.target.z -= (dx * rightZ - dy * fwdZ) * panScale;
+                CameraRig.prevMouse = { x: e.clientX, y: e.clientY };
+            } else {
+                updateHoveredTileFromMouse(e.clientX, e.clientY);
+            }
+        });
+
+        window.addEventListener('pointerup', (e) => {
+            CameraRig.isOrbitDragging = false;
+            CameraRig.isPanDragging = false;
+
+            if (GameState.povMode !== 'fps' && e.target === canvas && e.button === 0) {
+                const dist = Math.hypot(e.clientX - pointerDownPos.x, e.clientY - pointerDownPos.y);
+                if (dist < 7) {
+                    updateHoveredTileFromMouse(e.clientX, e.clientY);
+                    handlePrimaryAction();
+                }
+            }
+        });
+
+        canvas.addEventListener('contextmenu', e => e.preventDefault());
+        canvas.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            if (GameState.povMode === 'fps') {
+                // Scroll wheel in First-Person adjusts Sight Render Distance or switches to Clash View on zoom-out
+                CameraRig.distance = Math.max(14, Math.min(105, CameraRig.distance + e.deltaY * 0.035));
+            } else {
+                CameraRig.distance = Math.max(14, Math.min(105, CameraRig.distance + e.deltaY * 0.035));
+            }
+        }, { passive: false });
+
+        // =====================================================================
+        // 13. 2D MINIMAP WITH LIVE VIEW FRUSTUM CONE VISUALIZATION
+        // =====================================================================
+        const minimapCanvas = document.getElementById('minimap-canvas');
+        const minimapCtx = minimapCanvas.getContext('2d');
+        const minimapBgCanvas = document.createElement('canvas');
+        minimapBgCanvas.width = 240;
+        minimapBgCanvas.height = 240;
+
+        function preRenderMinimapTerrain() {
+            const ctx = minimapBgCanvas.getContext('2d');
+            for (let gz = -HALF_GRID; gz < HALF_GRID; gz++) {
+                for (let gx = -HALF_GRID; gx < HALF_GRID; gx++) {
+                    const biome = getTileBiome(gx, gz);
+                    if (biome === 'plains') ctx.fillStyle = '#15803d';
+                    else if (biome === 'desert') ctx.fillStyle = '#a16207';
+                    else if (biome === 'forest') ctx.fillStyle = '#064e3b';
+                    else if (biome === 'badlands') ctx.fillStyle = '#1e293b';
+                    else if (biome === 'water') ctx.fillStyle = '#0369a1';
+                    ctx.fillRect((gx + HALF_GRID) * 2, (gz + HALF_GRID) * 2, 2, 2);
+                }
+            }
+        }
+        preRenderMinimapTerrain();
+
+        function drawMinimap() {
+            // 1. Draw darkened world map base
+            minimapCtx.drawImage(minimapBgCanvas, 0, 0);
+            minimapCtx.fillStyle = 'rgba(6, 11, 22, 0.55)';
+            minimapCtx.fillRect(0, 0, 240, 240);
+
+            // 2. Highlight Active Frustum-Culled Chunks on the Minimap
+            minimapCtx.fillStyle = 'rgba(52, 211, 153, 0.22)';
+            for (let i = 0; i < spatialChunks.length; i++) {
+                const ch = spatialChunks[i];
+                if (ch.isVisible) {
+                    minimapCtx.fillRect(ch.cx * 16, ch.cz * 16, 16, 16);
+                }
+            }
+
+            // 3. Draw Live Yellow FOV Sight Cone from Hero/Camera position
+            const hGrid = worldToGrid(Hero.group.position.x, Hero.group.position.z);
+            const hx = (hGrid.gx + HALF_GRID) * 2;
+            const hz = (hGrid.gz + HALF_GRID) * 2;
+            const coneRadiusPx = (GameState.renderDistance / TILE_SIZE) * 2;
+            // In Three.js our look vector is (-sin(yaw), -cos(yaw)), which in 2D canvas angle is:
+            const lookAngle = Math.atan2(-Math.cos(CameraRig.yaw), -Math.sin(CameraRig.yaw));
+            const halfFov = (camera.fov * Math.PI / 180) * 0.58;
+
+            minimapCtx.save();
+            minimapCtx.beginPath();
+            minimapCtx.moveTo(hx, hz);
+            minimapCtx.arc(hx, hz, coneRadiusPx, lookAngle - halfFov, lookAngle + halfFov);
+            minimapCtx.closePath();
+            minimapCtx.fillStyle = 'rgba(251, 191, 36, 0.24)';
+            minimapCtx.fill();
+            minimapCtx.strokeStyle = 'rgba(251, 191, 36, 0.85)';
+            minimapCtx.lineWidth = 1.5;
+            minimapCtx.stroke();
+            minimapCtx.restore();
+
+            // 4. Draw Player Structures, Loot Chests & Outposts
+            GameState.entities.forEach(ent => {
+                const px = (ent.gx + HALF_GRID) * 2;
+                const pz = (ent.gz + HALF_GRID) * 2;
+                if (ent.isPlayerStructure) {
+                    minimapCtx.fillStyle = ent.type === 'townhall' ? '#38bdf8' : '#93c5fd';
+                    minimapCtx.fillRect(px - 2, pz - 2, 4, 4);
+                } else if (ent.type === 'chest') {
+                    minimapCtx.fillStyle = '#fbbf24';
+                    minimapCtx.fillRect(px - 2, pz - 2, 3.5, 3.5);
+                } else if (ent.type === 'outpost_tower') {
+                    minimapCtx.fillStyle = '#f43f5e';
+                    minimapCtx.beginPath();
+                    minimapCtx.arc(px, pz, 4, 0, Math.PI * 2);
+                    minimapCtx.fill();
+                }
+            });
+
+            // 5. Draw Enemy Raiders & Friendly Knights
+            minimapCtx.fillStyle = '#ef4444';
+            GameState.enemies.forEach(en => {
+                const { gx, gz } = worldToGrid(en.mesh.position.x, en.mesh.position.z);
+                minimapCtx.fillRect((gx + HALF_GRID) * 2 - 1.5, (gz + HALF_GRID) * 2 - 1.5, 3, 3);
+            });
+
+            minimapCtx.fillStyle = '#38bdf8';
+            GameState.knights.forEach(kn => {
+                const { gx, gz } = worldToGrid(kn.mesh.position.x, kn.mesh.position.z);
+                minimapCtx.fillRect((gx + HALF_GRID) * 2 - 1.5, (gz + HALF_GRID) * 2 - 1.5, 3, 3);
+            });
+
+            // 6. Draw Hero Dot
+            minimapCtx.fillStyle = '#ffffff';
+            minimapCtx.beginPath();
+            minimapCtx.arc(hx, hz, 4, 0, Math.PI * 2);
+            minimapCtx.fill();
+        }
+
+        minimapCanvas.addEventListener('pointerdown', (e) => {
+            const rect = minimapCanvas.getBoundingClientRect();
+            const normX = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+            const normZ = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+            const gx = Math.round(normX * GRID_SIZE - HALF_GRID);
+            const gz = Math.round(normZ * GRID_SIZE - HALF_GRID);
+            const { x, z } = gridToWorld(gx, gz);
+            CameraRig.setPOV('freepan');
+            CameraRig.target.set(x, 0, z);
+        });
+
+        // =====================================================================
+        // 14. PARTICLES, FLOATING POPUPS & HUD UPDATES
+        // =====================================================================
+        function spawnBurstParticles(wx, wy, wz, colorHex, count = 8) {
+            const geo = new THREE.BoxGeometry(0.26, 0.26, 0.26);
+            const mat = new THREE.MeshLambertMaterial({ color: colorHex });
+            for (let i = 0; i < count; i++) {
+                const mesh = new THREE.Mesh(geo, mat);
+                mesh.position.set(wx, wy, wz);
+                const vel = new THREE.Vector3(
+                    (Math.random() - 0.5) * 6,
+                    2.8 + Math.random() * 4,
+                    (Math.random() - 0.5) * 6
+                );
+                scene.add(mesh);
+                GameState.particles.push({ mesh, vel, life: 0.58 });
+            }
+        }
+
+        function spawnFloatingText(wx, wy, wz, text, colorClass = 'text-amber-300') {
+            const vec = new THREE.Vector3(wx, wy, wz);
+            vec.project(camera);
+            if (vec.z > 1) return;
+            const sx = (vec.x * 0.5 + 0.5) * window.innerWidth;
+            const sy = (-vec.y * 0.5 + 0.5) * window.innerHeight;
+
+            const div = document.createElement('div');
+            div.className = `floating-popup ${colorClass}`;
+            div.style.left = `${sx}px`;
+            div.style.top = `${sy}px`;
+            div.textContent = text;
+            overlayContainer.appendChild(div);
+            setTimeout(() => div.remove(), 1250);
+        }
+
+        function setStatusToast(msg) {
+            document.getElementById('status-toast').textContent = msg;
+        }
+
+        function selectHotbarSlot(slot) {
+            GameState.selectedSlot = slot;
+            FirstPersonViewmodel.updateToolAppearance();
+            refreshCursorVisual();
+
+            document.querySelectorAll('.slot-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.slot === slot);
+            });
+
+            if (slot === 'action') {
+                setStatusToast('⚔️ 1st-Person Greatsword / Pickaxe: Left-Click to harvest trees/ores, cleave Goblins, or inspect your structures.');
+            } else if (slot === 'crossbow') {
+                setStatusToast('🏹 1st-Person Arcane Crossbow: Left-Click to fire high-velocity energy bolts at distant Goblins & Outposts! Press [Q] for Spin Slash.');
+            } else if (STRUCTURE_DEFS[slot]) {
+                const d = STRUCTURE_DEFS[slot];
+                setStatusToast(`🔨 Builder Rig (${d.icon} ${d.name}): Aim at any open tile and Left-Click to construct!`);
+            }
+        }
+
+        document.querySelectorAll('.slot-btn').forEach(btn => {
+            btn.addEventListener('click', () => selectHotbarSlot(btn.dataset.slot));
+        });
+
+        function updateHUD() {
+            const cap = GameState.maxStorage;
+            document.getElementById('res-wood-text').textContent = `${GameState.wood}/${cap}`;
+            document.getElementById('res-wood-bar').style.width = `${Math.min(100, (GameState.wood / cap) * 100)}%`;
+
+            document.getElementById('res-stone-text').textContent = `${GameState.stone}/${cap}`;
+            document.getElementById('res-stone-bar').style.width = `${Math.min(100, (GameState.stone / cap) * 100)}%`;
+
+            document.getElementById('res-gold-text').textContent = `${GameState.gold}/${cap}`;
+            document.getElementById('res-gold-bar').style.width = `${Math.min(100, (GameState.gold / cap) * 100)}%`;
+
+            document.getElementById('res-elixir-text').textContent = `${GameState.elixir}/${cap}`;
+            document.getElementById('res-elixir-bar').style.width = `${Math.min(100, (GameState.elixir / cap) * 100)}%`;
+
+            document.getElementById('res-gems').textContent = GameState.gems;
+
+            let goldRate = 0, elixirRate = 0;
+            GameState.collectors.forEach(c => {
+                if (c.type === 'goldmine') goldRate += 4 * c.level;
+                if (c.type === 'elixirmine') elixirRate += 4 * c.level;
+            });
+            document.getElementById('rate-gold').textContent = `+${goldRate}/s`;
+            document.getElementById('rate-elixir').textContent = `+${elixirRate}/s`;
+
+            const maxKnights = GameState.barracksList.reduce((s, b) => s + b.level * 2, 0);
+            document.getElementById('army-count').textContent = `${GameState.knights.length}/${maxKnights}`;
+            document.getElementById('outposts-remaining').textContent = `${GameState.outposts.length} Outposts`;
+
+            document.getElementById('hero-hp-text').textContent = `${Math.ceil(Hero.hp)}/${Hero.maxHp}`;
+            document.getElementById('hero-hp-bar').style.width = `${Math.max(0, (Hero.hp / Hero.maxHp) * 100)}%`;
+
+            const th = GameState.entities.get(tileKey(0, 0));
+            if (th) {
+                document.getElementById('th-lvl-badge').textContent = `Town Hall Lv.${th.level}`;
+                document.getElementById('th-hp-text').textContent = `${Math.ceil(th.hp)}/${th.maxHp}`;
+                document.getElementById('th-hp-bar').style.width = `${Math.max(0, (th.hp / th.maxHp) * 100)}%`;
+            }
+        }
+
+        function updateFrustumTelemetryDOM() {
+            const rendered = GameState.renderedTilesCount;
+            const culledPct = Math.max(0, Math.round((1 - rendered / totalWorldTiles) * 100));
+            document.getElementById('cull-percent-badge').textContent = `${culledPct}% Culled`;
+            document.getElementById('stat-tiles-rendered').textContent = `${rendered.toLocaleString()} / 14,400`;
+            document.getElementById('stat-tiles-bar').style.width = `${Math.min(100, (rendered / totalWorldTiles) * 100)}%`;
+            document.getElementById('stat-entities-rendered').textContent =
+                `${GameState.visibleEntitiesCount} / ${GameState.entities.size}`;
+            document.getElementById('stat-chunks-rendered').textContent =
+                `${GameState.activeChunksCount} / ${spatialChunks.length}`;
+        }
+
+        document.getElementById('btn-time-toggle').addEventListener('click', cycleTimeOfDay);
+        document.getElementById('btn-trigger-raid').addEventListener('click', triggerRaidWave);
+
+        const activeKeys = new Set();
+        window.addEventListener('keydown', (e) => {
+            const k = e.key.toLowerCase();
+            activeKeys.add(k);
+
+            if (k === 'v') {
+                const next = GameState.povMode === 'fps' ? 'clash' : 'fps';
+                CameraRig.setPOV(next);
+            } else if (k === 'f') {
+                const modal = document.getElementById('forge-modal');
+                updateForgeModalUI();
+                modal.classList.toggle('hidden');
+            } else if (k === 'escape') {
+                document.getElementById('forge-modal').classList.add('hidden');
+                document.getElementById('inspector-panel').classList.add('hidden');
+            } else if (k === ' ') {
+                e.preventDefault();
+                if (GameState.povMode === 'freepan') {
+                    CameraRig.setPOV('fps');
+                } else {
+                    handlePrimaryAction();
+                }
+            } else if (k === 'q') {
+                Hero.triggerWhirlwind();
+            } else if (k === 'z') {
+                castClashSpell('heal');
+            } else if (k === 'x') {
+                castClashSpell('rage');
+            } else if (k === 'c') {
+                castClashSpell('lightning');
+            } else if (k === '1') selectHotbarSlot('action');
+            else if (k === '2') selectHotbarSlot('crossbow');
+            else if (k === '3') selectHotbarSlot('wall');
+            else if (k === '4') selectHotbarSlot('goldmine');
+            else if (k === '5') selectHotbarSlot('elixirmine');
+            else if (k === '6') selectHotbarSlot('vault');
+            else if (k === '7') selectHotbarSlot('cannon');
+            else if (k === '8') selectHotbarSlot('archertower');
+            else if (k === '9') selectHotbarSlot('wizardtower');
+            else if (k === '0') selectHotbarSlot('barracks');
+        });
+
+        window.addEventListener('keyup', (e) => {
+            activeKeys.delete(e.key.toLowerCase());
+        });
+
+        // 1-Second Economy, Passive Regen & Raid Timer Tick
+        setInterval(() => {
+            let goldGain = 0, elixirGain = 0;
+            GameState.collectors.forEach(c => {
+                if (c.type === 'goldmine') goldGain += 4 * c.level;
+                if (c.type === 'elixirmine') elixirGain += 4 * c.level;
+            });
+            if (goldGain > 0 || elixirGain > 0) {
+                addResources({ gold: goldGain, elixir: elixirGain });
+            }
+
+            const regenAmount = GameState.relics.titanArmor ? 15 : 5;
+            if (Hero.hp < Hero.maxHp) {
+                Hero.hp = Math.min(Hero.maxHp, Hero.hp + regenAmount);
+            }
+
+            GameState.raidCountdown--;
+            if (GameState.raidCountdown <= 0) {
+                triggerRaidWave();
+            }
+            document.getElementById('raid-timer').textContent = `${GameState.raidCountdown}s`;
+            updateHUD();
+        }, 1000);
+
+        // =====================================================================
+        // 15. MAIN 60 FPS GAME LOOP (MOVEMENT, FRUSTUM CULLING, SPELLS, AI)
+        // =====================================================================
+        let lastTime = performance.now();
+        let telemetryFrameCounter = 0;
+
+        function animate(now = performance.now()) {
+            requestAnimationFrame(animate);
+            const dt = Math.min((now - lastTime) / 1000, 0.1);
+            lastTime = now;
+
+            if (Hero.whirlwindCooldown > 0) {
+                Hero.whirlwindCooldown = Math.max(0, Hero.whirlwindCooldown - dt);
+            }
+            if (Hero.rageBoostTimer > 0) {
+                Hero.rageBoostTimer = Math.max(0, Hero.rageBoostTimer - dt);
+            }
+
+            // 1. WASD Movement (Relative to Camera Sight Yaw!)
+            let inX = 0, inZ = 0;
+            if (activeKeys.has('w') || activeKeys.has('arrowup')) inZ -= 1;
+            if (activeKeys.has('s') || activeKeys.has('arrowdown')) inZ += 1;
+            if (activeKeys.has('a') || activeKeys.has('arrowleft')) inX -= 1;
+            if (activeKeys.has('d') || activeKeys.has('arrowright')) inX += 1;
+
+            const isMoving = (inX !== 0 || inZ !== 0);
+            if (isMoving) {
+                const len = Math.hypot(inX, inZ);
+                inX /= len; inZ /= len;
+
+                const fwdX = Math.sin(CameraRig.yaw);
+                const fwdZ = Math.cos(CameraRig.yaw);
+                const rightX = Math.cos(CameraRig.yaw);
+                const rightZ = -Math.sin(CameraRig.yaw);
+
+                const moveX = (inX * rightX + inZ * fwdX);
+                const moveZ = (inX * rightZ + inZ * fwdZ);
+
+                if (GameState.povMode === 'freepan') {
+                    CameraRig.target.x += moveX * 38 * dt;
+                    CameraRig.target.z += moveZ * 38 * dt;
+                } else {
+                    const bound = (HALF_GRID - 1) * TILE_SIZE;
+                    const speedMult = Hero.rageBoostTimer > 0 ? 1.35 : 1.0;
+                    const nx = Math.max(-bound, Math.min(bound, Hero.group.position.x + moveX * Hero.speed * speedMult * dt));
+                    const nz = Math.max(-bound, Math.min(bound, Hero.group.position.z + moveZ * Hero.speed * speedMult * dt));
+                    const { gx, gz } = worldToGrid(nx, nz);
+
+                    Hero.group.position.x = nx;
+                    Hero.group.position.z = nz;
+                    Hero.group.position.y = getTileHeight(gx, gz);
+
+                    if (GameState.povMode === 'clash') {
+                        Hero.group.rotation.y = Math.atan2(moveX, moveZ);
+                    }
+
+                    Hero.walkCycle += dt * 13;
+                    Hero.leftLeg.rotation.x = Math.sin(Hero.walkCycle) * 0.65;
+                    Hero.rightLeg.rotation.x = -Math.sin(Hero.walkCycle) * 0.65;
+                }
+            } else {
+                Hero.leftLeg.rotation.x *= 0.85;
+                Hero.rightLeg.rotation.x *= 0.85;
+            }
+
+            // Update First-Person Held Weapon & 3rd-Person Arm Swing
+            FirstPersonViewmodel.update(dt, isMoving);
+
+            if (Hero.whirlwindActive > 0) {
+                Hero.whirlwindActive -= dt;
+                Hero.group.rotation.y += dt * 28;
+            } else if (Hero.swinging) {
+                Hero.swingProgress += dt * 7.5;
+                Hero.rightArmPivot.rotation.x = -Math.sin(Hero.swingProgress * Math.PI) * 2.0;
+                if (Hero.swingProgress >= 1) {
+                    Hero.swinging = false;
+                    Hero.rightArmPivot.rotation.x = 0;
+                }
+            }
+
+            // 2. Update Camera Pose & Execute Real-Time View Frustum Culling!
+            CameraRig.update(dt);
+            updateViewFrustumCulling();
+
+            if (++telemetryFrameCounter % 6 === 0) {
+                updateFrustumTelemetryDOM();
+            }
+
+            // 3. Update Active Clash Spell Rings (Heal & Rage)
+            for (let i = GameState.spellZones.length - 1; i >= 0; i--) {
+                const sz = GameState.spellZones[i];
+                sz.duration -= dt;
+                sz.tick += dt;
+                sz.mesh.rotation.z += dt * 1.5;
+
+                if (sz.type === 'rage') {
+                    if (Math.hypot(Hero.group.position.x - sz.x, Hero.group.position.z - sz.z) <= sz.radius) {
+                        Hero.rageBoostTimer = 0.5;
+                    }
+                }
+
+                if (sz.tick >= 0.5) {
+                    sz.tick = 0;
+                    if (sz.type === 'heal') {
+                        if (Math.hypot(Hero.group.position.x - sz.x, Hero.group.position.z - sz.z) <= sz.radius) {
+                            Hero.hp = Math.min(Hero.maxHp, Hero.hp + 18);
+                        }
+                        GameState.knights.forEach(kn => {
+                            if (Math.hypot(kn.mesh.position.x - sz.x, kn.mesh.position.z - sz.z) <= sz.radius) {
+                                kn.hp = Math.min(kn.maxHp, kn.hp + 20);
+                            }
+                        });
+                        updateHUD();
+                    }
+                }
+
+                if (sz.duration <= 0) {
+                    scene.remove(sz.mesh);
+                    GameState.spellZones.splice(i, 1);
+                }
+            }
+
+            // 4. Animate Water, Town Hall Crystal & Collector Rotors
+            if (waterPlaneMesh) {
+                waterPlaneMesh.position.y = -0.24 + Math.sin(now * 0.0025) * 0.06;
+            }
+            if (townHallCrystal) {
+                townHallCrystal.rotation.y += dt * 1.8;
+                townHallCrystal.position.y = 3.35 + Math.sin(now * 0.004) * 0.16;
+            }
+
+            GameState.entities.forEach(ent => {
+                const goalScale = ent.targetScale || 1;
+                if (ent.spawnScale !== undefined && ent.spawnScale < goalScale) {
+                    ent.spawnScale = Math.min(goalScale, ent.spawnScale + dt * 5.5);
+                    ent.mesh.scale.setScalar(ent.spawnScale);
+                }
+                if (ent.rotorMesh && ent.mesh.visible) {
+                    ent.rotorMesh.rotation.y += dt * 3.0;
+                }
+            });
+
+            // 5. Defensive Turrets AI
+            const hammerReloadBoost = GameState.relics.masterHammer ? 0.65 : 1.0;
+            GameState.turrets.forEach(turret => {
+                turret.cooldown = Math.max(0, turret.cooldown - dt);
+                if (turret.cooldown > 0 || GameState.enemies.length === 0) return;
+
+                const { x: tx, z: tz } = gridToWorld(turret.gx, turret.gz);
+                let targetEnemy = null;
+                let bestDist = turret.range;
+
+                for (const en of GameState.enemies) {
+                    const d = Math.hypot(en.mesh.position.x - tx, en.mesh.position.z - tz);
+                    if (d < bestDist) {
+                        bestDist = d;
+                        targetEnemy = en;
+                    }
+                }
+
+                if (targetEnemy) {
+                    turret.cooldown = turret.fireRate * hammerReloadBoost;
+                    if (turret.turretHead) {
+                        turret.turretHead.rotation.y = Math.atan2(
+                            targetEnemy.mesh.position.x - tx,
+                            targetEnemy.mesh.position.z - tz
+                        );
+                    }
+
+                    let projColor = 0x1e293b;
+                    if (turret.type === 'archertower') { projColor = 0xfbbf24; SoundFX.arrow(); }
+                    else if (turret.type === 'wizardtower') { projColor = 0xd946ef; SoundFX.magic(); }
+                    else { SoundFX.cannon(); }
+
+                    const projMesh = new THREE.Mesh(
+                        new THREE.BoxGeometry(0.35, 0.35, 0.35),
+                        new THREE.MeshBasicMaterial({ color: projColor })
+                    );
+                    projMesh.position.set(tx, getTileHeight(turret.gx, turret.gz) + 2.2, tz);
+                    scene.add(projMesh);
+
+                    GameState.projectiles.push({
+                        mesh: projMesh,
+                        target: targetEnemy,
+                        damage: turret.damage,
+                        splash: turret.splash || 0,
+                        speed: 28,
+                        color: projColor
+                    });
+                }
+            });
+
+            // 6. Update 3D Projectiles (Both Hero Crossbow Bolts & Turret Shots)
+            for (let i = GameState.projectiles.length - 1; i >= 0; i--) {
+                const p = GameState.projectiles[i];
+
+                if (p.isHeroBolt) {
+                    p.life -= dt;
+                    p.mesh.position.addScaledVector(p.velocity, dt);
+
+                    let hit = false;
+                    // Check enemy collision
+                    for (let j = GameState.enemies.length - 1; j >= 0; j--) {
+                        const en = GameState.enemies[j];
+                        if (Math.hypot(en.mesh.position.x - p.mesh.position.x, en.mesh.position.z - p.mesh.position.z) < 1.5) {
+                            damageEnemy(en, p.damage);
+                            hit = true;
+                            break;
+                        }
+                    }
+                    // Check chest/outpost collision
+                    if (!hit) {
+                        const bGrid = worldToGrid(p.mesh.position.x, p.mesh.position.z);
+                        const ent = GameState.entities.get(tileKey(bGrid.gx, bGrid.gz));
+                        if (ent && (ent.type === 'chest' || ent.type === 'outpost_tower' || ent.type === 'resource') && p.mesh.position.y < 3.0) {
+                            harvestOrDamageTileEntity(ent, 2);
+                            hit = true;
+                        }
+                    }
+
+                    if (hit || p.life <= 0 || p.mesh.position.y < -1) {
+                        scene.remove(p.mesh);
+                        GameState.projectiles.splice(i, 1);
+                    }
+                    continue;
+                }
+
+                if (!p.target || p.target.hp <= 0) {
+                    scene.remove(p.mesh);
+                    GameState.projectiles.splice(i, 1);
+                    continue;
+                }
+                const targetPos = p.target.mesh.position.clone().add(new THREE.Vector3(0, 0.9, 0));
+                const dir = targetPos.clone().sub(p.mesh.position);
+                const dist = dir.length();
+                if (dist < 0.85) {
+                    if (p.splash > 0) {
+                        GameState.enemies.forEach(en => {
+                            if (en.mesh.position.distanceTo(p.mesh.position) <= p.splash) {
+                                damageEnemy(en, p.damage);
+                            }
+                        });
+                        spawnBurstParticles(p.mesh.position.x, p.mesh.position.y, p.mesh.position.z, p.color, 10);
+                    } else {
+                        damageEnemy(p.target, p.damage);
+                    }
+                    scene.remove(p.mesh);
+                    GameState.projectiles.splice(i, 1);
+                } else {
+                    dir.normalize();
+                    p.mesh.position.addScaledVector(dir, p.speed * dt);
+                }
+            }
+
+            // 7. Friendly Barracks Knights AI
+            GameState.knights.forEach((kn, idx) => {
+                kn.attackCooldown = Math.max(0, kn.attackCooldown - dt);
+                const kPos = kn.mesh.position;
+
+                let closestEnemy = null;
+                let bestDist = 18;
+                for (const en of GameState.enemies) {
+                    const d = Math.hypot(en.mesh.position.x - kPos.x, en.mesh.position.z - kPos.z);
+                    if (d < bestDist) {
+                        bestDist = d;
+                        closestEnemy = en;
+                    }
+                }
+
+                if (closestEnemy) {
+                    const dx = closestEnemy.mesh.position.x - kPos.x;
+                    const dz = closestEnemy.mesh.position.z - kPos.z;
+                    const dist = Math.hypot(dx, dz);
+                    kn.mesh.rotation.y = Math.atan2(dx, dz);
+                    if (dist > 1.5) {
+                        kPos.x += (dx / dist) * kn.speed * dt;
+                        kPos.z += (dz / dist) * kn.speed * dt;
+                    } else if (kn.attackCooldown <= 0) {
+                        kn.attackCooldown = 0.85;
+                        damageEnemy(closestEnemy, kn.damage);
+                    }
+                } else {
+                    const anchor = GameState.knightStance === 'follow'
+                        ? Hero.group.position
+                        : new THREE.Vector3(0, 0, 0);
+                    const angle = kn.offsetAngle + idx * 1.1;
+                    const goalX = anchor.x + Math.cos(angle) * 3.4;
+                    const goalZ = anchor.z + Math.sin(angle) * 3.4;
+                    const dx = goalX - kPos.x;
+                    const dz = goalZ - kPos.z;
+                    const d = Math.hypot(dx, dz);
+                    if (d > 0.6) {
+                        kPos.x += (dx / d) * kn.speed * dt;
+                        kPos.z += (dz / d) * kn.speed * dt;
+                        kn.mesh.rotation.y = Math.atan2(dx, dz);
+                    }
+                }
+                const kGrid = worldToGrid(kPos.x, kPos.z);
+                kPos.y = getTileHeight(kGrid.gx, kGrid.gz);
+            });
+
+            // 8. Enemy Goblin Raiders AI
+            GameState.enemies.forEach(en => {
+                en.attackCooldown = Math.max(0, en.attackCooldown - dt);
+                const ePos = en.mesh.position;
+                const distToHero = Math.hypot(Hero.group.position.x - ePos.x, Hero.group.position.z - ePos.z);
+
+                if (en.guardOrigin && distToHero > 22) {
+                    const dx = en.guardOrigin.x - ePos.x;
+                    const dz = en.guardOrigin.z - ePos.z;
+                    const d = Math.hypot(dx, dz);
+                    if (d > 3.5) {
+                        ePos.x += (dx / d) * en.speed * 0.6 * dt;
+                        ePos.z += (dz / d) * en.speed * 0.6 * dt;
+                        en.mesh.rotation.y = Math.atan2(dx, dz);
+                    }
+                    return;
+                }
+
+                const targetX = distToHero < 14 ? Hero.group.position.x : 0;
+                const targetZ = distToHero < 14 ? Hero.group.position.z : 0;
+                const dx = targetX - ePos.x;
+                const dz = targetZ - ePos.z;
+                const dist = Math.hypot(dx, dz);
+                en.mesh.rotation.y = Math.atan2(dx, dz);
+
+                const stepX = ePos.x + (dx / (dist || 1)) * 1.4;
+                const stepZ = ePos.z + (dz / (dist || 1)) * 1.4;
+                const nextGrid = worldToGrid(stepX, stepZ);
+                const blockingStruct = GameState.entities.get(tileKey(nextGrid.gx, nextGrid.gz));
+
+                if (blockingStruct && blockingStruct.isPlayerStructure) {
+                    if (en.attackCooldown <= 0) {
+                        en.attackCooldown = 1.1;
+                        blockingStruct.hp -= en.damage;
+                        spawnBurstParticles(stepX, 1.0, stepZ, 0xef4444, 4);
+                        if (blockingStruct.hp <= 0 && blockingStruct.type !== 'townhall') {
+                            entitiesGroup.remove(blockingStruct.mesh);
+                            GameState.entities.delete(tileKey(blockingStruct.gx, blockingStruct.gz));
+                            GameState.turrets = GameState.turrets.filter(t => t !== blockingStruct);
+                            GameState.collectors = GameState.collectors.filter(c => c !== blockingStruct);
+                        } else if (blockingStruct.type === 'townhall' && blockingStruct.hp <= 0) {
+                            blockingStruct.hp = blockingStruct.maxHp;
+                            setStatusToast('⚠️ Town Hall breached! Emergency repairs activated!');
+                        }
+                        updateHUD();
+                    }
+                } else if (distToHero < 1.9) {
+                    if (en.attackCooldown <= 0) {
+                        en.attackCooldown = 1.0;
+                        Hero.hp = Math.max(20, Hero.hp - en.damage);
+                        spawnFloatingText(Hero.group.position.x, 2.2, Hero.group.position.z, `-${en.damage}`, 'text-rose-400');
+                        updateHUD();
+                    }
+                } else if (dist > 1.2) {
+                    ePos.x += (dx / dist) * en.speed * dt;
+                    ePos.z += (dz / dist) * en.speed * dt;
+                }
+
+                const eGrid = worldToGrid(ePos.x, ePos.z);
+                ePos.y = getTileHeight(eGrid.gx, eGrid.gz);
+            });
+
+            // 9. Update 3D Debris Particles
+            for (let i = GameState.particles.length - 1; i >= 0; i--) {
+                const p = GameState.particles[i];
+                p.life -= dt;
+                if (p.life <= 0) {
+                    scene.remove(p.mesh);
+                    GameState.particles.splice(i, 1);
+                } else {
+                    p.vel.y -= 14 * dt;
+                    p.mesh.position.addScaledVector(p.vel, dt);
+                    p.mesh.scale.setScalar(Math.max(0.01, p.life * 1.4));
+                }
+            }
+
+            // 10. Draw Minimap with Live Frustum Cone & Render 3D Scene
+            drawMinimap();
+            renderer.render(scene, camera);
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        window.onload = function () {
+            populateMassiveWorld();
+            CameraRig.setPOV('fps');
+            refreshCursorVisual();
+            animate();
+        };
+    </script>
+</body>
+</html>
